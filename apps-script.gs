@@ -1053,7 +1053,11 @@ function normalizeDateParam(value) {
 // แปลงค่าเซลล์ (อาจเป็น Date object หรือ string) ให้เป็น string รูปแบบ yyyy-MM-dd เสมอ
 // จำเป็นเพราะ Google Sheets มักแปลงข้อความที่หน้าตาเหมือนวันที่ให้เป็นเซลล์ชนิด Date เองอัตโนมัติ
 function cellDateStr(cell) {
-  return cell instanceof Date ? Utilities.formatDate(cell, TZ, 'yyyy-MM-dd') : String(cell).trim();
+  if (cell instanceof Date) {
+    const shifted = new Date(cell.getTime() + 12 * 60 * 60 * 1000);
+    return Utilities.formatDate(shifted, TZ, 'yyyy-MM-dd');
+  }
+  return normalizeDateParam(String(cell).trim());
 }
 
 // เหตุผลเดียวกับ cellDateStr — Google Sheets แปลงข้อความที่หน้าตาเหมือนเวลา (เช่น "14:03:55")
