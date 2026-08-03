@@ -458,34 +458,38 @@ function isSchoolDay(date) {
 }
 
 // ------------------------------------------------------------
-//  ส่งข้อความแจ้งเตือนเข้ากลุ่ม LINE — ทำงานอัตโนมัติจาก trigger ที่ตั้งไว้ (createDailyTrigger)
+//  ส่งรายงานสถานะปัจจุบัน (รายห้อง) เข้า LINE — ใช้ร่วมกันโดย sendDailyReminder (~08:40)
+//  และ sendDailySummary (~09:00 fallback) เนื้อหาเหมือนกัน ต่างแค่เวลาที่ trigger เรียก
+//  ห้องที่ยังไม่ส่งจะโชว์ "⏳ ยังไม่ส่งข้อมูล" ในตัวอยู่แล้ว (จาก buildRoomLine) จึงทำหน้าที่
+//  เป็นทั้งรายงานและตัวเตือนในข้อความเดียว — ถ้าครบ 7/7 ห้องไปแล้วก่อนหน้านี้ ข้อความนี้ก็ยัง
+//  ส่งซ้ำได้ตามเวลาปกติ ไม่ได้ตัดออก (ครูต้องการให้เห็นสถานะ ณ เวลานั้นเสมอ)
+// ------------------------------------------------------------
+function sendCurrentReportToLine(now) {
+  const data = getDailySummaryData(todayStr());
+  const lines = [`📊 สรุปเช็คชื่อ${thaiFullDateStr(now)}`, ''];
+  data.rooms.forEach(r => lines.push(buildRoomLine(r)));
+  sendLineNotify(lines.join('\n'));
+}
+
+// ------------------------------------------------------------
+//  ทำงานอัตโนมัติจาก trigger ที่ตั้งไว้ ~08:40 — ส่งรายงานสถานะปัจจุบันเข้า LINE ทันที
+//  (ถ้าห้องไหนส่งไปแล้วก่อน 08:40 ก็จะเห็นข้อมูลจริงของห้องนั้นเลย ไม่ใช่แค่ข้อความเตือนเฉยๆ)
 //  ข้ามการส่งถ้าวันนี้ไม่ใช่วันเรียน
 // ------------------------------------------------------------
 function sendDailyReminder() {
   const now = new Date();
   if (!isSchoolDay(now)) return;
-
-  let message = `\n🔔 เช็คชื่อรายวัน${thaiFullDateStr(now)} เริ่มแล้ว\nหัวหน้าห้องกรุณารายงานได้เลยครับ/ค่ะ`;
-  if (REPORT_PAGE_URL.indexOf('http') === 0) {
-    message += `\n${REPORT_PAGE_URL}`;
-  }
-  sendLineNotify(message);
+  sendCurrentReportToLine(now);
 }
 
 // ------------------------------------------------------------
-//  ส่งสรุปยอดทั้งโรงเรียนเข้ากลุ่ม LINE — ทำงานอัตโนมัติจาก trigger ที่ตั้งไว้ ~09:00
-//  ทำหน้าที่เป็น fallback: ถ้าครบ 7/7 ห้องไปแล้วก่อนหน้านี้ (ส่ง sendCompleteSummary ผ่าน handleSubmit ไปแล้ว)
-//  ก็ยังส่งสรุปอีกรอบตอน 09:00 เผื่อครูอยากดูสรุปช่วงเช้ารวด — ข้ามการส่งถ้าวันนี้ไม่ใช่วันเรียน
+//  ส่งรายงานสถานะปัจจุบันเข้า LINE อีกรอบ — ทำงานอัตโนมัติจาก trigger ที่ตั้งไว้ ~09:00
+//  ทำหน้าที่เป็น fallback เผื่อครูอยากดูสรุปช่วงเช้ารวด — ข้ามการส่งถ้าวันนี้ไม่ใช่วันเรียน
 // ------------------------------------------------------------
 function sendDailySummary() {
   const now = new Date();
   if (!isSchoolDay(now)) return;
-
-  const data = getDailySummaryData(todayStr());
-  const lines = [`📊 สรุปเช็คชื่อ${thaiFullDateStr(now)}`, ''];
-  data.rooms.forEach(r => lines.push(buildRoomLine(r)));
-
-  sendLineNotify(lines.join('\n'));
+  sendCurrentReportToLine(now);
 }
 
 // ------------------------------------------------------------
@@ -536,7 +540,7 @@ function sendRoomReportToLine(room, total, presentTotal, absentTotal, personalTo
 //  สร้างข้อความสรุปทั้งโรงเรียน แบบรายห้อง — ใช้ตอนส่งครบ 7/7 ห้อง
 // ------------------------------------------------------------
 function buildCompleteSummaryMessage(data) {
-  const lines = ['📋 รายละเอียดรายห้อง', ''];
+  const lines = ['📋 รายละเอียดรายห้อง', thaiFullDateStr(new Date(data.date + 'T00:00:00')), ''];
   data.rooms.forEach(r => lines.push(buildRoomLine(r)));
   return lines.join('\n');
 }

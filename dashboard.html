@@ -284,7 +284,7 @@ function buildRoomLine(r) {
 }
 
 function renderSchoolSummary(rooms, dateStr) {
-  const lines = ['📋 รายละเอียดรายห้อง', ''];
+  const lines = ['📋 รายละเอียดรายห้อง', thaiDateLabel(dateStr), ''];
   rooms.forEach(r => lines.push(buildRoomLine(r)));
   document.getElementById('schoolSummaryText').value = lines.join('\n');
 }
