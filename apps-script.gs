@@ -1174,3 +1174,22 @@ function respond(data) {
     .createTextOutput(JSON.stringify(data))
     .setMimeType(ContentService.MimeType.JSON);
 }
+
+function debugDailyRows() {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  Logger.log('Spreadsheet ID: ' + SPREADSHEET_ID);
+  Logger.log('ชื่อไฟล์ชีต: ' + ss.getName());
+  Logger.log('ชื่อชีตทั้งหมด: ' + ss.getSheets().map(s => s.getName()).join(', '));
+
+  const roomSheet = ss.getSheetByName('ห้องเรียน');
+  Logger.log('ห้องเรียน จำนวนแถว: ' + (roomSheet ? roomSheet.getLastRow() : 'ไม่พบชีต'));
+  if (roomSheet) Logger.log('ห้องเรียน: ' + JSON.stringify(roomSheet.getDataRange().getValues()));
+
+  const dailySheet = ss.getSheetByName('เช็คชื่อรายวัน');
+  Logger.log('เช็คชื่อรายวัน จำนวนแถว: ' + (dailySheet ? dailySheet.getLastRow() : 'ไม่พบชีต'));
+  if (dailySheet) Logger.log('เช็คชื่อรายวัน: ' + JSON.stringify(dailySheet.getDataRange().getValues()));
+
+  const settingsSheet = ss.getSheetByName('ตั้งค่ากิจการนักเรียน');
+  Logger.log('ตั้งค่ากิจการนักเรียน จำนวนแถว: ' + (settingsSheet ? settingsSheet.getLastRow() : 'ไม่พบชีต'));
+  if (settingsSheet) Logger.log('ตั้งค่ากิจการนักเรียน: ' + JSON.stringify(settingsSheet.getDataRange().getValues()));
+}
