@@ -246,13 +246,14 @@ function handleStudents(params) {
 // เดิมนับแยกชาย/หญิงตามฟอร์มกระดาษ ตัดออกแล้ว 2569 — pattern เดียวกับ handleSubmitEvening เป๊ะ
 function handleSubmit(data) {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const room = normalizeRoom(data.room);
 
   // 1) นับจำนวนเต็มของห้องจาก Sheet "นักเรียน" (ไม่สนใจเพศแล้ว)
   const stuSheet = ss.getSheetByName('นักเรียน');
   const stuRows  = stuSheet.getDataRange().getValues();
   let total = 0;
   for (let i = 1; i < stuRows.length; i++) {
-    if (stuRows[i][0] === data.room && stuRows[i][2]) total++;
+    if (normalizeRoom(stuRows[i][0]) === room && stuRows[i][2]) total++;
   }
 
   // 2) ตัดชื่อซ้ำในลิสต์เดียวกันออก (กันหัวหน้าห้องติ๊กชื่อเดิมซ้ำโดยไม่ตั้งใจ)
@@ -270,7 +271,7 @@ function handleSubmit(data) {
   const reporterName  = String(data.reporterName || '').trim();
 
   const rowValues = [
-    dateStr, data.room, timeStr,
+    dateStr, room, timeStr,
     presentTotal,
     absentNames.length, absentNames.join(', '),
     personalLeaveNames.length, personalLeaveNames.join(', '),
@@ -287,7 +288,7 @@ function handleSubmit(data) {
   const logRows  = logSheet.getDataRange().getValues();
   let foundRow = -1;
   for (let i = 1; i < logRows.length; i++) {
-    if (cellDateStr(logRows[i][0]) === dateStr && logRows[i][1] === data.room) { foundRow = i + 1; break; } // +1 เพราะ sheet เริ่มแถว 1
+    if (cellDateStr(logRows[i][0]) === dateStr && normalizeRoom(logRows[i][1]) === room) { foundRow = i + 1; } // +1 เพราะ sheet เริ่มแถว 1; ใช้แถวล่าสุดถ้าเคยมีข้อมูลซ้ำ
   }
 
   if (foundRow > 0) {
@@ -313,14 +314,19 @@ function handleSubmit(data) {
 // ------------------------------------------------------------
 function handleMyStatus(params) {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const room = normalizeRoom(params.room);
 
   const logSheet = ss.getSheetByName('เช็คชื่อรายวัน');
   const logRows  = logSheet.getDataRange().getValues();
   const dateStr  = todayStr();
 
+  let latest = null;
   for (let i = 1; i < logRows.length; i++) {
     const r = logRows[i];
-    if (cellDateStr(r[0]) === dateStr && r[1] === params.room) {
+    if (cellDateStr(r[0]) === dateStr && normalizeRoom(r[1]) === room) latest = r;
+  }
+  if (latest) {
+      const r = latest;
       return respond({
         status: 'ok', submitted: true, time: cellTimeStr(r[2]),
         present:       { total: r[3]  },
@@ -329,7 +335,6 @@ function handleMyStatus(params) {
         sickLeave:     { total: r[8]  },
         activity:      { total: r[10] },
       });
-    }
   }
   return respond({ status: 'ok', submitted: false });
 }
@@ -339,6 +344,7 @@ function handleMyStatus(params) {
 //  "จำนวนเต็ม" ของแต่ละห้องนับจาก Sheet "นักเรียน" เสมอ ไม่ว่าจะส่งรายงานวันนี้หรือยัง
 // ------------------------------------------------------------
 function handleByDate(dateStr) {
+  dateStr = normalizeDateParam(dateStr);
   return respond(getDailySummaryData(dateStr));
 }
 
@@ -359,7 +365,7 @@ function getDailySummaryData(dateStr) {
   const stuRows  = stuSheet.getDataRange().getValues();
   const rosterTotals = {}; // room -> total (number)
   for (let i = 1; i < stuRows.length; i++) {
-    const room = stuRows[i][0];
+    const room = normalizeRoom(stuRows[i][0]);
     if (!room || !stuRows[i][2]) continue;
     rosterTotals[room] = (rosterTotals[room] || 0) + 1;
   }
@@ -370,7 +376,9 @@ function getDailySummaryData(dateStr) {
   for (let i = 1; i < logRows.length; i++) {
     const r = logRows[i];
     if (cellDateStr(r[0]) === dateStr) {
-      submittedMap[r[1]] = {
+      const room = normalizeRoom(r[1]);
+      if (!room) continue;
+      submittedMap[room] = {
         time:          cellTimeStr(r[2]),
         present:       { total: Number(r[3])  || 0 },
         absent:        { total: Number(r[4])  || 0, names: r[5]  || '' },
@@ -438,12 +446,13 @@ function getDailySummaryData(dateStr) {
 // ------------------------------------------------------------
 function handleSubmitEvening(data) {
   const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const room = normalizeRoom(data.room);
 
   const stuSheet = ss.getSheetByName('นักเรียน');
   const stuRows  = stuSheet.getDataRange().getValues();
   let total = 0;
   for (let i = 1; i < stuRows.length; i++) {
-    if (stuRows[i][0] === data.room && stuRows[i][2]) total++;
+    if (normalizeRoom(stuRows[i][0]) === room && stuRows[i][2]) total++;
   }
 
   const absentNames        = uniqueList(data.absentNames);
@@ -459,7 +468,7 @@ function handleSubmitEvening(data) {
   const reporterName = String(data.reporterName || '').trim();
 
   const rowValues = [
-    dateStr, data.room, timeStr,
+    dateStr, room, timeStr,
     presentTotal,
     absentNames.length, absentNames.join(', '),
     personalLeaveNames.length, personalLeaveNames.join(', '),
@@ -472,7 +481,7 @@ function handleSubmitEvening(data) {
   const logRows  = logSheet.getDataRange().getValues();
   let foundRow = -1;
   for (let i = 1; i < logRows.length; i++) {
-    if (cellDateStr(logRows[i][0]) === dateStr && logRows[i][1] === data.room) { foundRow = i + 1; break; }
+    if (cellDateStr(logRows[i][0]) === dateStr && normalizeRoom(logRows[i][1]) === room) { foundRow = i + 1; }
   }
 
   if (foundRow > 0) {
@@ -496,6 +505,7 @@ function handleSubmitEvening(data) {
 //  สำหรับโมดูลนี้ตามที่ครูยืนยัน — ครูต้องเปิดแดชบอร์ดดูเอง)
 // ------------------------------------------------------------
 function handleEveningByDate(dateStr) {
+  dateStr = normalizeDateParam(dateStr);
   return respond(getEveningSummaryData(dateStr));
 }
 
@@ -512,7 +522,7 @@ function getEveningSummaryData(dateStr) {
   const rosterTotals = {};
   const stuRows = ss.getSheetByName('นักเรียน').getDataRange().getValues();
   for (let i = 1; i < stuRows.length; i++) {
-    const room = stuRows[i][0];
+    const room = normalizeRoom(stuRows[i][0]);
     if (!room || !stuRows[i][2]) continue;
     rosterTotals[room] = (rosterTotals[room] || 0) + 1;
   }
@@ -522,7 +532,9 @@ function getEveningSummaryData(dateStr) {
   for (let i = 1; i < logRows.length; i++) {
     const r = logRows[i];
     if (cellDateStr(r[0]) === dateStr) {
-      submittedMap[r[1]] = {
+      const room = normalizeRoom(r[1]);
+      if (!room) continue;
+      submittedMap[room] = {
         time:          cellTimeStr(r[2]),
         present:       Number(r[3]) || 0,
         absent:        { total: Number(r[4])  || 0, names: r[5]  || '' },
@@ -606,19 +618,20 @@ const MORNING_NAME_COLS = EVENING_NAME_COLS; // เช็คชื่อรา�
 // รับ ctx (จาก loadComparisonContext) เป็น optional เพื่อไม่ต้องอ่านชีทซ้ำเวลาวนหลายห้อง
 function getDailyComparisonData(dateStr, room, ctx) {
   ctx = ctx || loadComparisonContext();
+  room = normalizeRoom(room);
 
   const roster = [];
   for (let i = 1; i < ctx.stuRows.length; i++) {
-    if (ctx.stuRows[i][0] === room && ctx.stuRows[i][2]) roster.push(String(ctx.stuRows[i][2]).trim());
+    if (normalizeRoom(ctx.stuRows[i][0]) === room && ctx.stuRows[i][2]) roster.push(String(ctx.stuRows[i][2]).trim());
   }
 
   let morningRow = null;
   for (let i = 1; i < ctx.morningLog.length; i++) {
-    if (cellDateStr(ctx.morningLog[i][0]) === dateStr && ctx.morningLog[i][1] === room) { morningRow = ctx.morningLog[i]; break; }
+    if (cellDateStr(ctx.morningLog[i][0]) === dateStr && normalizeRoom(ctx.morningLog[i][1]) === room) { morningRow = ctx.morningLog[i]; }
   }
   let eveningRow = null;
   for (let i = 1; i < ctx.eveningLog.length; i++) {
-    if (cellDateStr(ctx.eveningLog[i][0]) === dateStr && ctx.eveningLog[i][1] === room) { eveningRow = ctx.eveningLog[i]; break; }
+    if (cellDateStr(ctx.eveningLog[i][0]) === dateStr && normalizeRoom(ctx.eveningLog[i][1]) === room) { eveningRow = ctx.eveningLog[i]; }
   }
 
   const morningDone = !!morningRow;
@@ -648,7 +661,7 @@ function getDailyComparisonData(dateStr, room, ctx) {
 
 // doGet action=dailyComparison — ระบุ room คืนห้องเดียว, ไม่ระบุ room คืนทุกห้อง (ใช้โดยแดชบอร์ด)
 function handleDailyComparison(params) {
-  const dateStr = params.date || todayStr();
+  const dateStr = normalizeDateParam(params.date || todayStr());
 
   if (params.room) {
     return respond(Object.assign({ status: 'ok', date: dateStr }, getDailyComparisonData(dateStr, params.room)));
@@ -697,7 +710,7 @@ function getAttendanceRateData(dateStr) {
 }
 
 function handleAttendanceRate(params) {
-  const dateStr = params.date || todayStr();
+  const dateStr = normalizeDateParam(params.date || todayStr());
   return respond(Object.assign({ status: 'ok', date: dateStr }, getAttendanceRateData(dateStr)));
 }
 
@@ -1017,6 +1030,24 @@ function uniqueList(arr) {
 
 function todayStr() {
   return Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+}
+
+function normalizeRoom(room) {
+  return String(room || '').trim();
+}
+
+function normalizeDateParam(value) {
+  const raw = String(value || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const m = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) {
+    const day = m[1].padStart(2, '0');
+    const month = m[2].padStart(2, '0');
+    const yearNum = Number(m[3]);
+    const year = String(yearNum > 2400 ? yearNum - 543 : yearNum);
+    return `${year}-${month}-${day}`;
+  }
+  return raw;
 }
 
 // แปลงค่าเซลล์ (อาจเป็น Date object หรือ string) ให้เป็น string รูปแบบ yyyy-MM-dd เสมอ
