@@ -34,7 +34,7 @@
 //
 //  ขั้นตอนเพิ่ม (ไม่บังคับ) — แจ้งเตือน/รายงานอัตโนมัติเข้ากลุ่ม LINE มี 5 แบบ:
 //     ทันทีที่ห้องส่ง      → รายงานของห้องนั้นห้องเดียว (ยอด + ผู้รายงาน)
-//     ทันทีที่ครบ 7/7 ห้อง → สรุปทั้งโรงเรียน แยกกลุ่ม ม.ต้น/ม.ปลาย + % มาเรียน
+//     ทันทีที่ครบ 7/7 ห้อง → สรุปทั้งโรงเรียนแบบรายห้อง (ห้องละ 1 บรรทัด)
 //     ~08:40              → เตือนให้เริ่มส่งรายงาน (sendDailyReminder)
 //     ~08:45              → เตือนเฉพาะห้องที่ยังไม่ส่ง ระบุชื่อห้อง (sendMissingRoomsReminder,
 //                            ถ้าครบแล้วจะไม่ส่งซ้ำ)
@@ -482,36 +482,10 @@ function sendDailySummary() {
   if (!isSchoolDay(now)) return;
 
   const data = getDailySummaryData(todayStr());
-  const t = data.totals;
+  const lines = [`📊 สรุปเช็คชื่อ${thaiFullDateStr(now)}`, ''];
+  data.rooms.forEach(r => lines.push(buildRoomLine(r)));
 
-  const lines = [];
-  lines.push(`📊 สรุปเช็คชื่อ${thaiFullDateStr(now)}`);
-  lines.push(`รวมทั้งโรงเรียน: มา ${t.present.total} · ขาด ${t.absent.total} · ลากิจ ${t.personalLeave.total} · ลาป่วย ${t.sickLeave.total} · กิจกรรม ${t.activity.total}`);
-  lines.push(`ส่งรายงานแล้ว ${t.submittedCount}/${t.totalRooms} ห้อง`);
-
-  const detailLines = [];
-  data.rooms.forEach(r => {
-    if (!r.submitted) return;
-    const parts = [];
-    if (r.absent.names)        parts.push(`ขาด: ${r.absent.names}`);
-    if (r.personalLeave.names) parts.push(`ลากิจ: ${r.personalLeave.names}`);
-    if (r.sickLeave.names)     parts.push(`ลาป่วย: ${r.sickLeave.names}`);
-    if (r.activity.names)      parts.push(`กิจกรรม: ${r.activity.names}`);
-    if (parts.length) detailLines.push(`${r.room} — ${parts.join(' / ')}`);
-  });
-  if (detailLines.length) {
-    lines.push('');
-    lines.push('รายละเอียดห้องที่มีคนขาด/ลา/ไปกิจกรรม:');
-    detailLines.forEach(l => lines.push(l));
-  }
-
-  const notSubmitted = data.rooms.filter(r => !r.submitted).map(r => r.room);
-  if (notSubmitted.length) {
-    lines.push('');
-    lines.push(`⚠️ ห้องที่ยังไม่ส่งรายงาน: ${notSubmitted.join(', ')}`);
-  }
-
-  sendLineNotify('\n' + lines.join('\n'));
+  sendLineNotify(lines.join('\n'));
 }
 
 // ------------------------------------------------------------
@@ -559,63 +533,25 @@ function sendRoomReportToLine(room, total, presentTotal, absentTotal, personalTo
 }
 
 // ------------------------------------------------------------
-//  สร้างข้อความสรุปทั้งโรงเรียน แยกกลุ่ม ม.ต้น/ม.ปลาย — ใช้ตอนส่งครบ 7/7 ห้อง
+//  สร้างข้อความสรุปทั้งโรงเรียน แบบรายห้อง — ใช้ตอนส่งครบ 7/7 ห้อง
 // ------------------------------------------------------------
 function buildCompleteSummaryMessage(data) {
-  const junior = buildGroupSummary(data.rooms, r => isJuniorRoom(r.room));
-  const senior = buildGroupSummary(data.rooms, r => isSeniorRoom(r.room));
-  const all    = buildGroupSummary(data.rooms, () => true);
-  const rate   = all.roster.total > 0 ? (all.present.total / all.roster.total * 100).toFixed(2) : '0.00';
-
-  const lines = [];
-  lines.push('📢 สรุปการมาเรียนทั้งโรงเรียน');
-  lines.push('');
-  if (junior.count) {
-    lines.push('ระดับ ม.ต้น');
-    lines.push(`ทั้งหมด ${junior.roster.total} คน`);
-    lines.push(`มาเรียน ${junior.present.total} คน`);
-    lines.push(`ขาด ${junior.absent.total} คน`);
-    lines.push(`ลากิจ ${junior.personalLeave.total} คน`);
-    lines.push(`ลาป่วย ${junior.sickLeave.total} คน`);
-    lines.push(`ไปกิจกรรม ${junior.activity.total} คน`);
-    lines.push('');
-  }
-  if (senior.count) {
-    lines.push('ระดับ ม.ปลาย');
-    lines.push(`ทั้งหมด ${senior.roster.total} คน`);
-    lines.push(`มาเรียน ${senior.present.total} คน`);
-    lines.push(`ขาด ${senior.absent.total} คน`);
-    lines.push(`ลากิจ ${senior.personalLeave.total} คน`);
-    lines.push(`ลาป่วย ${senior.sickLeave.total} คน`);
-    lines.push(`ไปกิจกรรม ${senior.activity.total} คน`);
-    lines.push('');
-  }
-  lines.push(`รวมทั้งโรงเรียน ${all.roster.total} คน`);
-  lines.push(`มาเรียนคิดเป็น ${rate}%`);
-  lines.push('');
-  lines.push(`ส่งข้อมูลครบ ${data.totals.submittedCount}/${data.totals.totalRooms} ห้อง`);
+  const lines = ['📋 รายละเอียดรายห้อง', ''];
+  data.rooms.forEach(r => lines.push(buildRoomLine(r)));
   return lines.join('\n');
 }
 
-// รวมยอดของกลุ่มห้อง (matchFn ตรวจจาก object ห้อง) — ใช้ทั้งฝั่งสร้างข้อความ LINE
-function buildGroupSummary(rooms, matchFn) {
-  const zero = () => ({ male: 0, female: 0, total: 0 });
-  const g = { roster: zero(), present: zero(), absent: zero(), personalLeave: zero(), sickLeave: zero(), activity: zero(), submittedCount: 0, count: 0 };
-  function add(target, src) { target.male += src.male; target.female += src.female; target.total += src.total; }
-  rooms.filter(matchFn).forEach(r => {
-    g.count++;
-    add(g.roster, r.roster);
-    if (r.submitted) {
-      g.submittedCount++;
-      add(g.present, r.present); add(g.absent, r.absent);
-      add(g.personalLeave, r.personalLeave); add(g.sickLeave, r.sickLeave); add(g.activity, r.activity);
-    }
-  });
-  return g;
+// สร้างบรรทัดสรุป 1 ห้อง — ใช้ร่วมกันทั้ง buildCompleteSummaryMessage และ sendDailySummary
+// แสดงเฉพาะหมวดที่มีคนมากกว่า 0 เท่านั้น (ไม่โชว์หมวดที่เป็น 0 กันข้อความยาวเกินจำเป็น)
+function buildRoomLine(r) {
+  if (!r.submitted) return `${r.room}: ⏳ ยังไม่ส่งข้อมูล`;
+  const parts = [`ทั้งหมด ${r.roster.total}`, `มา ${r.present.total}`];
+  if (r.absent.total > 0)        parts.push(`ขาด ${r.absent.total}`);
+  if (r.personalLeave.total > 0) parts.push(`ลากิจ ${r.personalLeave.total}`);
+  if (r.sickLeave.total > 0)     parts.push(`ป่วย ${r.sickLeave.total}`);
+  if (r.activity.total > 0)      parts.push(`กิจกรรม ${r.activity.total}`);
+  return `${r.room}: ${parts.join(' | ')}`;
 }
-
-function isJuniorRoom(room) { return room.indexOf('ม.1') === 0 || room.indexOf('ม.2') === 0 || room.indexOf('ม.3') === 0; }
-function isSeniorRoom(room) { return room.indexOf('ม.4') === 0 || room.indexOf('ม.5') === 0 || room.indexOf('ม.6') === 0; }
 
 // ------------------------------------------------------------
 //  ส่งข้อความเข้ากลุ่ม LINE ผ่าน LINE Notify — จุดเดียวที่เรียก UrlFetchApp จริง
