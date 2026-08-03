@@ -273,41 +273,19 @@ function renderTable(rooms) {
 // สร้างข้อความสรุปทั้งโรงเรียน แยกกลุ่ม ม.ต้น/ม.ปลาย + % มาเรียน — รูปแบบเดียวกับที่ระบบ
 // ส่งเข้า LINE อัตโนมัติตอนครบ 7/7 ห้อง แต่ตัวนี้ครูกดคัดลอกไปวางส่งต่อเองได้ (เช่น ใน OpenChat
 // ที่บอทเข้าไม่ได้) ไม่ต้องรอให้ครบทุกห้อง — กดคัดลอกได้ตลอดเวลาตามข้อมูล ณ ตอนนั้น
+function buildRoomLine(r) {
+  if (!r.submitted) return `${r.room}: ⏳ ยังไม่ส่งข้อมูล`;
+  const parts = [`ทั้งหมด ${r.roster.total}`, `มา ${r.present.total}`];
+  if (r.absent.total > 0)        parts.push(`ขาด ${r.absent.total}`);
+  if (r.personalLeave.total > 0) parts.push(`ลากิจ ${r.personalLeave.total}`);
+  if (r.sickLeave.total > 0)     parts.push(`ป่วย ${r.sickLeave.total}`);
+  if (r.activity.total > 0)      parts.push(`กิจกรรม ${r.activity.total}`);
+  return `${r.room}: ${parts.join(' | ')}`;
+}
+
 function renderSchoolSummary(rooms, dateStr) {
-  const junior = sumGroup(rooms, isJunior);
-  const senior = sumGroup(rooms, isSenior);
-  const all    = sumGroup(rooms, () => true);
-  const rate   = all.roster.total > 0 ? (all.present.total / all.roster.total * 100).toFixed(2) : '0.00';
-
-  const lines = [];
-  lines.push('📢 สรุปการมาเรียนทั้งโรงเรียน');
-  lines.push(`วันที่ ${thaiDateLabel(dateStr)}`);
-  lines.push('');
-  if (junior.count) {
-    lines.push('ระดับ ม.ต้น');
-    lines.push(`ทั้งหมด ${junior.roster.total} คน`);
-    lines.push(`มาเรียน ${junior.present.total} คน`);
-    lines.push(`ขาด ${junior.absent.total} คน`);
-    lines.push(`ลากิจ ${junior.personalLeave.total} คน`);
-    lines.push(`ลาป่วย ${junior.sickLeave.total} คน`);
-    lines.push(`ไปกิจกรรม ${junior.activity.total} คน`);
-    lines.push('');
-  }
-  if (senior.count) {
-    lines.push('ระดับ ม.ปลาย');
-    lines.push(`ทั้งหมด ${senior.roster.total} คน`);
-    lines.push(`มาเรียน ${senior.present.total} คน`);
-    lines.push(`ขาด ${senior.absent.total} คน`);
-    lines.push(`ลากิจ ${senior.personalLeave.total} คน`);
-    lines.push(`ลาป่วย ${senior.sickLeave.total} คน`);
-    lines.push(`ไปกิจกรรม ${senior.activity.total} คน`);
-    lines.push('');
-  }
-  lines.push(`รวมทั้งโรงเรียน ${all.roster.total} คน`);
-  lines.push(`มาเรียนคิดเป็น ${rate}%`);
-  lines.push('');
-  lines.push(`ส่งข้อมูลครบ ${all.submittedCount}/${all.count} ห้อง`);
-
+  const lines = ['📋 รายละเอียดรายห้อง', ''];
+  rooms.forEach(r => lines.push(buildRoomLine(r)));
   document.getElementById('schoolSummaryText').value = lines.join('\n');
 }
 
