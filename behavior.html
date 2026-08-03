@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>คะแนนความประพฤติ — เมืองแกพิทยาสรรค์</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/css/style.css">
+  <style>
+    .type-toggle { display: flex; gap: 0.75rem; margin-bottom: 1rem; }
+    .type-toggle button {
+      flex: 1; padding: 0.7rem; border: 2px solid var(--border); border-radius: 8px;
+      background: #fff; font-family: var(--font); font-size: 1rem; cursor: pointer; font-weight: 600;
+    }
+    .type-toggle button.active-deduct { border-color: var(--accent,#922b21); background:#fadbd8; color: var(--accent,#922b21); }
+    .type-toggle button.active-merit  { border-color: var(--green,#1d8348); background:#d5f5e3; color: var(--green,#1d8348); }
+    .page-tabs { display: flex; border-bottom: 2px solid var(--border); margin: 1.5rem 0 1rem; max-width: 680px; }
+    .page-tab {
+      flex: 1; padding: 0.7rem; text-align: center; background: none; border: none;
+      border-bottom: 3px solid transparent; margin-bottom: -2px; font-family: var(--font);
+      font-size: 1rem; font-weight: 600; cursor: pointer; color: var(--muted,#666);
+    }
+    .page-tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+    table.score-table { width: 100%; border-collapse: collapse; background: #fff; max-width: 680px; }
+    table.score-table th, table.score-table td { padding: 0.5rem 0.6rem; border: 1px solid #eee; text-align: left; font-size: 0.9rem; }
+    table.score-table th { background: #fafafa; }
+    .score-low { color: var(--accent,#922b21); font-weight: 700; }
+    .score-ok  { color: var(--green,#1d8348); font-weight: 700; }
+    .history-box { display: none; background: #fbfbfb; padding: 0.6rem 0.8rem; font-size: 0.85rem; }
+    #pinGate { max-width: 400px; margin: 4rem auto; }
+  </style>
+</head>
+<body>
+
+<nav class="navbar">
+  <a href="index.html" class="navbar-brand">📋 งานกิจการนักเรียน MKP</a>
+  <ul class="navbar-nav">
+    <li><a href="index.html">หน้าหลัก</a></li>
+    <li><a href="report.html">เช็คชื่อเช้า</a></li>
+    <li><a href="report-evening.html">เช็คกลับเย็น</a></li>
+    <li><a href="dashboard.html">แดชบอร์ดเช็คชื่อ</a></li>
+    <li><a href="settings.html">⚙️ ตั้งค่าเบื้องหลัง</a></li>
+  </ul>
+</nav>
+
+<div class="hero" style="padding:2rem;">
+  <h1>⭐ คะแนนความประพฤติ</h1>
+  <p>สำหรับครูทุกท่าน — บันทึกเหตุการณ์เมื่อพบเห็น</p>
+</div>
+
+<div class="container">
+  <div class="breadcrumb">
+    <a href="index.html">หน้าหลัก</a><span>›</span>
+    คะแนนความประพฤติ
+  </div>
+
+  <!-- ⚠️ PIN นี้เช็คฝั่ง client เท่านั้น กันแค่คนไม่ตั้งใจเปิดผิดหน้า ไม่ใช่การป้องกันข้อมูลจริงจัง
+       เพราะ SCRIPT_URL ด้านล่างเป็น plaintext ในซอร์สโค้ดสาธารณะบน GitHub Pages อยู่ดี
+       คนที่ตั้งใจเรียก endpoint ตรงๆ (ข้าม UI นี้ไปเลย) จะไม่ถูก PIN นี้กันเลย —
+       ถ้าต้องการป้องกันข้อมูลจริงจังต้อง deploy Apps Script แบบผูกกับ Google Workspace
+       ของโดเมนโรงเรียน (ครูแจ้งว่าไม่มีโดเมนแบบนี้ ณ ตอนสร้างฟีเจอร์นี้ 2569) -->
+  <div id="pinGate" class="form-card">
+    <div id="pinAlert" class="alert"></div>
+    <div class="form-group">
+      <label for="pinInput">ใส่รหัส PIN เพื่อเข้าใช้งาน</label>
+      <input type="password" id="pinInput" class="form-control" inputmode="numeric" maxlength="6" placeholder="••••••">
+    </div>
+    <button type="button" class="btn btn-primary btn-full" onclick="checkPin()">เข้าใช้งาน</button>
+  </div>
+
+  <div id="mainContent" style="display:none;">
+    <div class="page-tabs">
+      <button type="button" class="page-tab active" id="tabRecord" onclick="switchTab('record')">📝 บันทึกเหตุการณ์</button>
+      <button type="button" class="page-tab" id="tabSummary" onclick="switchTab('summary')">📊 ดูสรุปคะแนน</button>
+    </div>
+
+    <!-- ===== หน้า 1: บันทึกเหตุการณ์ ===== -->
+    <div id="pageRecord">
+      <div class="form-card" style="max-width:520px;">
+        <div id="alertBox" class="alert"></div>
+
+        <div class="type-toggle">
+          <button type="button" id="btnDeduct" class="active-deduct" onclick="setType('หัก')">➖ หักคะแนน</button>
+          <button type="button" id="btnMerit" onclick="setType('เพิ่ม')">➕ เพิ่มคะแนน (ความดี)</button>
+        </div>
+
+        <div class="form-group">
+          <label for="room">ห้อง</label>
+          <select id="room" class="form-control" onchange="loadRoster()">
+            <option value="">— กำลังโหลดรายชื่อห้อง... —</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label for="studentName">นักเรียน</label>
+          <select id="studentName" class="form-control">
+            <option value="">— เลือกห้องก่อน —</option>
+          </select>
+        </div>
+
+        <div class="form-group" id="reasonDeductGroup">
+          <label for="reasonSelect">เหตุผล (หักคะแนน)</label>
+          <!-- เดิม hardcode 9 รายการไว้ในนี้ — ย้ายไป Sheet "เกณฑ์คะแนนความประพฤติ" แล้ว 2569
+               โหลดผ่าน loadCriteria() ตอนเข้าหน้า แก้ไขได้ที่ settings.html โดยไม่ต้องแก้โค้ด -->
+          <select id="reasonSelect" class="form-control" onchange="onReasonChange()">
+            <option value="">— กำลังโหลดเกณฑ์คะแนน... —</option>
+          </select>
+        </div>
+
+        <div class="form-group" id="reasonMeritGroup" style="display:none;">
+          <label for="meritReason">ความดีที่พบเห็น</label>
+          <input type="text" id="meritReason" class="form-control" placeholder="เช่น ช่วยเก็บขยะ, ได้เกียรติบัตรแข่งวิชาการ">
+        </div>
+
+        <div class="form-group" id="customPointsGroup" style="display:none;">
+          <label for="customPoints">จำนวนคะแนน</label>
+          <input type="number" id="customPoints" class="form-control" min="1" placeholder="ใส่ตัวเลข">
+        </div>
+
+        <div class="form-group" id="meritPointsGroup" style="display:none;">
+          <label for="meritPoints">จำนวนคะแนนที่จะเพิ่ม</label>
+          <input type="number" id="meritPoints" class="form-control" min="1" placeholder="ใส่ตัวเลข">
+        </div>
+
+        <div class="form-group">
+          <label for="reporterName">ผู้รายงาน</label>
+          <input type="text" id="reporterName" class="form-control" placeholder="เช่น นาย/นางสาว ชื่อ-นามสกุล">
+        </div>
+
+        <button type="button" class="btn btn-primary btn-full" id="submitBtn" onclick="submitBehavior()">✓ บันทึก</button>
+      </div>
+    </div>
+
+    <!-- ===== หน้า 2: ดูสรุปคะแนน ===== -->
+    <div id="pageSummary" style="display:none;">
+      <div class="form-card" style="max-width:680px;">
+        <div class="form-group">
+          <label for="summaryRoom">เลือกห้อง</label>
+          <select id="summaryRoom" class="form-control" onchange="loadSummary()">
+            <option value="">— เลือกห้อง —</option>
+          </select>
+        </div>
+        <p class="summary-line" id="summaryTermNote" style="color:var(--muted,#666);"></p>
+      </div>
+      <div style="max-width:680px; overflow-x:auto;">
+        <table class="score-table" id="summaryTable" style="display:none;">
+          <thead><tr><th>ชื่อ</th><th>คะแนนคงเหลือ</th><th></th></tr></thead>
+          <tbody id="summaryBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="footer">
+  <p>โรงเรียนเมืองแกพิทยาสรรค์ — ระบบงานกิจการนักเรียน</p>
+</div>
+
+<script>
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxeKrhg8Kqk0RGR8c317KSMZ3oZXrTbDLi64mFvnVQW5KdCAB477Tm4MNAZp5b46qqs/exec';
+// เดิม PIN hardcode '1234' ในไฟล์นี้ — เปลี่ยนเป็นตรวจผ่าน server (tier "behavior", 6 หลัก) แล้ว 2569
+// แก้ PIN ได้ที่ settings.html โดยไม่ต้องแก้โค้ด ⚠️ ยังเป็นแค่ตัวกันคนไม่ตั้งใจเปิดผิดเหมือนเดิม
+// ไม่ใช่การป้องกันข้อมูลจริงจัง (ดูคอมเมนต์เหนือ #pinGate ด้านบน)
+
+// ---------------- PIN gate ----------------
+async function checkPin() {
+  const val = document.getElementById('pinInput').value.trim();
+  try {
+    const res  = await fetch(SCRIPT_URL, { method: 'POST', body: JSON.stringify({ action: 'verifyPin', tier: 'behavior', pin: val }) });
+    const json = await res.json();
+    if (json.status === 'ok' && json.valid) {
+      sessionStorage.setItem('behaviorPinOk', '1');
+      document.getElementById('pinGate').style.display = 'none';
+      document.getElementById('mainContent').style.display = 'block';
+      initApp();
+    } else {
+      const el = document.getElementById('pinAlert');
+      el.className = 'alert alert-error';
+      el.textContent = 'รหัส PIN ไม่ถูกต้อง';
+      el.style.display = 'block';
+    }
+  } catch {
+    const el = document.getElementById('pinAlert');
+    el.className = 'alert alert-error';
+    el.textContent = 'ไม่สามารถตรวจสอบ PIN ได้ กรุณาลองใหม่';
+    el.style.display = 'block';
+  }
+}
+
+if (sessionStorage.getItem('behaviorPinOk') === '1') {
+  document.getElementById('pinGate').style.display = 'none';
+  document.getElementById('mainContent').style.display = 'block';
+  initApp();
+}
+
+// ---------------- Tabs ----------------
+function switchTab(tab) {
+  document.getElementById('tabRecord').classList.toggle('active', tab === 'record');
+  document.getElementById('tabSummary').classList.toggle('active', tab === 'summary');
+  document.getElementById('pageRecord').style.display = tab === 'record' ? 'block' : 'none';
+  document.getElementById('pageSummary').style.display = tab === 'summary' ? 'block' : 'none';
+}
+
+// ---------------- Init ----------------
+let currentType = 'หัก';
+let roomsCache = [];
+
+async function initApp() {
+  try {
+    const res  = await fetch(`${SCRIPT_URL}?action=rooms`);
+    const json = await res.json();
+    if (json.status === 'ok' && json.rooms.length) {
+      roomsCache = json.rooms;
+      const opts = '<option value="">— เลือกห้อง —</option>' + json.rooms.map(r => `<option value="${r}">${r}</option>`).join('');
+      document.getElementById('room').innerHTML = opts;
+      document.getElementById('summaryRoom').innerHTML = opts;
+    }
+  } catch {
+    showAlert('ไม่สามารถโหลดรายชื่อห้องได้ ตรวจสอบการเชื่อมต่อ', 'error');
+  }
+  loadCriteria();
+}
+
+// โหลดเกณฑ์หักคะแนนจาก Sheet "เกณฑ์คะแนนความประพฤติ" (แก้ไขได้ที่ settings.html) แทนของ hardcode เดิม
+// "อื่นๆ" ยังคงเป็นตัวเลือกพิเศษท้ายสุดเสมอ ให้กรอกคะแนนเอง ไม่ได้มาจาก Sheet
+async function loadCriteria() {
+  const sel = document.getElementById('reasonSelect');
+  try {
+    const res  = await fetch(`${SCRIPT_URL}?action=settingsData`);
+    const json = await res.json();
+    if (json.status === 'ok') {
+      const deductCriteria = (json.criteria || []).filter(c => c.type === 'หัก');
+      sel.innerHTML = deductCriteria.map(c =>
+        `<option value="${c.reason}" data-points="${c.points}">${c.reason} (หัก ${c.points})</option>`
+      ).join('') + `<option value="__other__" data-points="">อื่นๆ (ระบุคะแนนเอง)</option>`;
+    } else {
+      sel.innerHTML = `<option value="__other__" data-points="">อื่นๆ (ระบุคะแนนเอง)</option>`;
+    }
+  } catch {
+    sel.innerHTML = `<option value="">— โหลดเกณฑ์คะแนนไม่สำเร็จ —</option><option value="__other__" data-points="">อื่นๆ (ระบุคะแนนเอง)</option>`;
+  }
+}
+
+// ---------------- ประเภท หัก/เพิ่ม ----------------
+function setType(type) {
+  currentType = type;
+  document.getElementById('btnDeduct').classList.toggle('active-deduct', type === 'หัก');
+  document.getElementById('btnMerit').classList.toggle('active-merit', type === 'เพิ่ม');
+  document.getElementById('reasonDeductGroup').style.display = type === 'หัก' ? 'block' : 'none';
+  document.getElementById('reasonMeritGroup').style.display  = type === 'เพิ่ม' ? 'block' : 'none';
+  document.getElementById('meritPointsGroup').style.display  = type === 'เพิ่ม' ? 'block' : 'none';
+  onReasonChange();
+}
+
+function onReasonChange() {
+  const sel = document.getElementById('reasonSelect');
+  const isOther = currentType === 'หัก' && sel.value === '__other__';
+  document.getElementById('customPointsGroup').style.display = isOther ? 'block' : 'none';
+}
+
+// ---------------- โหลดรายชื่อนักเรียนของห้อง (ใช้ endpoint students เดิม) ----------------
+async function loadRoster() {
+  const room = document.getElementById('room').value;
+  const sel  = document.getElementById('studentName');
+  if (!room) { sel.innerHTML = '<option value="">— เลือกห้องก่อน —</option>'; return; }
+  sel.innerHTML = '<option value="">— กำลังโหลด... —</option>';
+  try {
+    const res  = await fetch(`${SCRIPT_URL}?action=students&room=${encodeURIComponent(room)}`);
+    const json = await res.json();
+    if (json.status === 'ok' && json.students.length) {
+      sel.innerHTML = '<option value="">— เลือกนักเรียน —</option>' +
+        json.students.map(s => `<option value="${s.name}">${s.no}. ${s.name}</option>`).join('');
+    } else {
+      sel.innerHTML = '<option value="">— ไม่มีรายชื่อนักเรียนในห้องนี้ —</option>';
+    }
+  } catch {
+    sel.innerHTML = '<option value="">— โหลดไม่สำเร็จ —</option>';
+  }
+}
+
+// ---------------- ส่งบันทึก ----------------
+async function submitBehavior() {
+  const room        = document.getElementById('room').value;
+  const studentName = document.getElementById('studentName').value;
+  const reporterName = document.getElementById('reporterName').value.trim();
+
+  if (!room || !studentName) { showAlert('กรุณาเลือกห้องและนักเรียนก่อน', 'error'); return; }
+
+  let reason, points;
+  if (currentType === 'หัก') {
+    const sel = document.getElementById('reasonSelect');
+    if (sel.value === '__other__') {
+      reason = 'อื่นๆ';
+      points = Number(document.getElementById('customPoints').value);
+      if (!points || points <= 0) { showAlert('กรุณาใส่จำนวนคะแนนที่จะหัก (อื่นๆ)', 'error'); return; }
+    } else {
+      reason = sel.value;
+      points = Number(sel.selectedOptions[0].dataset.points);
+    }
+  } else {
+    reason = document.getElementById('meritReason').value.trim();
+    points = Number(document.getElementById('meritPoints').value);
+    if (!reason) { showAlert('กรุณาระบุความดีที่พบเห็น', 'error'); return; }
+    if (!points || points <= 0) { showAlert('กรุณาใส่จำนวนคะแนนความดี', 'error'); return; }
+  }
+  if (!reporterName) { showAlert('กรุณาระบุผู้รายงาน', 'error'); return; }
+
+  const btnEl = document.getElementById('submitBtn');
+  btnEl.disabled = true;
+  btnEl.textContent = 'กำลังบันทึก...';
+
+  try {
+    const res = await fetch(SCRIPT_URL, {
+      method: 'POST',
+      body: JSON.stringify({ action: 'submitBehavior', room, studentName, type: currentType, reason, points, reporterName }),
+    });
+    const json = await res.json();
+    if (json.status === 'ok') {
+      showAlert(`✓ บันทึกสำเร็จ! ${studentName} — ${currentType} ${points} คะแนน (${reason})`, 'success');
+      document.getElementById('reporterName').value = reporterName; // เก็บชื่อผู้รายงานไว้ให้กรอกต่อเนื่องได้
+      document.getElementById('customPoints').value = '';
+      document.getElementById('meritReason').value = '';
+      document.getElementById('meritPoints').value = '';
+    } else {
+      showAlert(json.message || 'เกิดข้อผิดพลาด', 'error');
+    }
+  } catch {
+    showAlert('ไม่สามารถเชื่อมต่อได้ กรุณาลองใหม่', 'error');
+  } finally {
+    btnEl.disabled = false;
+    btnEl.textContent = '✓ บันทึก';
+  }
+}
+
+// ---------------- หน้าสรุปคะแนน ----------------
+async function loadSummary() {
+  const room = document.getElementById('summaryRoom').value;
+  const table = document.getElementById('summaryTable');
+  const body  = document.getElementById('summaryBody');
+  if (!room) { table.style.display = 'none'; return; }
+
+  body.innerHTML = '<tr><td colspan="3">กำลังโหลด...</td></tr>';
+  table.style.display = 'table';
+
+  try {
+    const res  = await fetch(`${SCRIPT_URL}?action=behaviorSummary&room=${encodeURIComponent(room)}`);
+    const json = await res.json();
+    if (json.status !== 'ok') { body.innerHTML = `<tr><td colspan="3">${json.message || 'เกิดข้อผิดพลาด'}</td></tr>`; return; }
+
+    document.getElementById('summaryTermNote').textContent = `ภาคเรียนปัจจุบัน: ${json.term || '-'} (คะแนนเริ่มต้น 100 ต่อภาคเรียน)`;
+
+    body.innerHTML = json.students.map((s, i) => {
+      const scoreClass = s.score < 60 ? 'score-low' : 'score-ok';
+      const historyHtml = s.history.length
+        ? s.history.map(h => `${h.date} ${h.time} — ${h.type} ${h.points} (${h.reason}) โดย ${h.reporter}`).join('<br>')
+        : 'ไม่มีประวัติในภาคเรียนนี้';
+      return `
+        <tr>
+          <td>${s.name}</td>
+          <td class="${scoreClass}">${s.score}</td>
+          <td><button type="button" class="btn btn-outline" style="padding:0.3rem 0.7rem;font-size:0.8rem;" onclick="toggleHistory(${i})">ดูประวัติ</button></td>
+        </tr>
+        <tr class="history-row" id="hist-${i}"><td colspan="3"><div class="history-box" id="histbox-${i}">${historyHtml}</div></td></tr>
+      `;
+    }).join('');
+  } catch {
+    body.innerHTML = '<tr><td colspan="3">ไม่สามารถเชื่อมต่อได้</td></tr>';
+  }
+}
+
+function toggleHistory(i) {
+  const box = document.getElementById(`histbox-${i}`);
+  box.style.display = box.style.display === 'block' ? 'none' : 'block';
+}
+
+function showAlert(msg, type) {
+  const el = document.getElementById('alertBox');
+  el.className = `alert alert-${type}`;
+  el.textContent = msg;
+  el.style.display = 'block';
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  if (type === 'success') setTimeout(() => el.style.display = 'none', 6000);
+}
+</script>
+
+</body>
+</html>

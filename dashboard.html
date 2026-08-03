@@ -38,10 +38,13 @@
 <body>
 
 <nav class="navbar">
-  <a href="index.html" class="navbar-brand">📋 เช็คชื่อรายวัน MKP</a>
+  <a href="index.html" class="navbar-brand">📋 งานกิจการนักเรียน MKP</a>
   <ul class="navbar-nav">
     <li><a href="index.html">หน้าหลัก</a></li>
-    <li><a href="report.html">รายงานเช็คชื่อ</a></li>
+    <li><a href="report.html">เช็คชื่อเช้า</a></li>
+    <li><a href="report-evening.html">เช็คกลับเย็น</a></li>
+    <li><a href="behavior.html">คะแนนความประพฤติ</a></li>
+    <li><a href="settings.html">⚙️ ตั้งค่าเบื้องหลัง</a></li>
   </ul>
 </nav>
 
@@ -68,26 +71,14 @@
     <div class="totals-grid" id="totalsGrid"></div>
     <p class="summary-line" id="totalsNote" style="color:var(--muted,#666); font-size:0.85rem; margin-top:-1rem; margin-bottom:1rem;"></p>
 
+    <!-- เดิมแยกนับชาย/หญิงตามฟอร์มกระดาษราชการ (2 แถวหัวตาราง) ตัดออกแล้ว 2569 — ครูยอมรับว่า
+         ไม่ตรงกับฟอร์มกระดาษนั้นอีกต่อไป ใช้ "% มาเรียน" ต่อห้องแทน (คำนวณสดฝั่ง client) -->
     <div class="table-wrap">
       <table class="att-table">
         <thead>
           <tr>
-            <th rowspan="2">ห้อง</th>
-            <th colspan="3">จำนวนเต็ม</th>
-            <th colspan="3">มา</th>
-            <th colspan="3">ขาด</th>
-            <th colspan="3">ลากิจ</th>
-            <th colspan="3">ลาป่วย</th>
-            <th colspan="3">ไปกิจกรรม</th>
-            <th rowspan="2">เวลาที่ส่ง</th>
-          </tr>
-          <tr>
-            <th>ช</th><th>ญ</th><th>รวม</th>
-            <th>ช</th><th>ญ</th><th>รวม</th>
-            <th>ช</th><th>ญ</th><th>รวม</th>
-            <th>ช</th><th>ญ</th><th>รวม</th>
-            <th>ช</th><th>ญ</th><th>รวม</th>
-            <th>ช</th><th>ญ</th><th>รวม</th>
+            <th>ห้อง</th><th>นักเรียนทั้งหมด</th><th>มา</th><th>ขาด</th><th>ลากิจ</th><th>ลาป่วย</th>
+            <th>ไปกิจกรรม</th><th>% มาเรียน</th><th>เวลาที่ส่ง (เช้า/เย็น)</th>
           </tr>
         </thead>
         <tbody id="tableBody"></tbody>
@@ -113,16 +104,41 @@
       <textarea id="absentListText" readonly rows="10"
         style="width:100%; margin-top:0.5rem; font-family:inherit; font-size:0.9rem; padding:0.6rem; border:1px solid #ddd; border-radius:8px; resize:vertical;"></textarea>
     </div>
+
+    <!-- เช็คกลับ 15:30 — เช็คอิสระเต็มรูปแบบเหมือนเช้า (ไม่กรองจากข้อมูลเช้า) ไม่มีการแจ้งเตือน LINE
+         ใดๆ สำหรับส่วนนี้ (ครูยืนยันแล้ว) ต้องเปิดหน้านี้ดูเอง — % มาเรียนรวมและรายชื่อสาย/หนี
+         คำนวณจากการเทียบผลเช้า-เย็นอัตโนมัติ (ดูรายละเอียดใน apps-script.gs หัวข้อ "โมดูล A") -->
+    <div class="form-card" style="margin-top:1.5rem;">
+      <h3 style="margin:0 0 0.5rem;">🏠 สถานะเช็คกลับ 15:30 (ของวันที่เลือกด้านบน)</h3>
+      <div class="table-wrap">
+        <table class="att-table" id="eveningTable">
+          <thead>
+            <tr><th>ห้อง</th><th>สถานะเช็คกลับ</th><th>มา</th><th>ขาด</th><th>ลากิจ</th><th>ลาป่วย</th><th>ไปกิจกรรม</th><th>% มาเรียนรวม</th><th>เวลาที่ส่ง</th></tr>
+          </thead>
+          <tbody id="eveningBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="form-card" style="margin-top:1.5rem;">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
+        <h3 style="margin:0;">⏰ รายชื่อสาย/หนี (เทียบเช้า-เย็นอัตโนมัติ)</h3>
+        <button type="button" class="btn btn-primary" onclick="copyLateAbsconderList()">📋 คัดลอกรายชื่อ</button>
+      </div>
+      <p class="summary-line" id="lateAbsconderNote" style="color:var(--muted,#666); font-size:0.85rem; margin-top:0.3rem;"></p>
+      <textarea id="lateAbsconderText" readonly rows="8"
+        style="width:100%; margin-top:0.5rem; font-family:inherit; font-size:0.9rem; padding:0.6rem; border:1px solid #ddd; border-radius:8px; resize:vertical;"></textarea>
+    </div>
   </div>
 </div>
 
 <div class="footer">
-  <p>โรงเรียนเมืองแกพิทยาสรรค์ — ระบบเช็คชื่อรายวัน</p>
+  <p>โรงเรียนเมืองแกพิทยาสรรค์ — ระบบงานกิจการนักเรียน</p>
 </div>
 
 <script>
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxJS_wiEzV7WhcdLL0qddk5W5U3IRUWCCjUuGdZo5CmBAm9rTDwKRyprf5u5OOdzZCH/exec';
-const COLS = 20; // 1 (ห้อง) + 3 (จำนวนเต็ม) + 5*3 (หมวด) + 1 (เวลาที่ส่ง)
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxeKrhg8Kqk0RGR8c317KSMZ3oZXrTbDLi64mFvnVQW5KdCAB477Tm4MNAZp5b46qqs/exec';
+const COLS = 9; // ห้อง, จำนวนเต็ม, มา, ขาด, ลากิจ, ลาป่วย, ไปกิจกรรม, % มาเรียน, เวลาที่ส่ง (เดิม 20 คอลัมน์ตอนแยกชาย/หญิง)
 
 function init() {
   const today = new Date().toLocaleDateString('sv-SE'); // yyyy-MM-dd ตามเวลาเครื่องผู้ใช้
@@ -145,9 +161,119 @@ async function loadData(dateStr) {
     renderTable(json.rooms);
     renderSchoolSummary(json.rooms, dateStr);
     renderAbsentList(json.rooms, dateStr);
+    loadEveningData(dateStr);
+    loadComparisonAndRate(dateStr);
   } catch {
     tbody.innerHTML = `<tr><td colspan="${COLS}">ไม่สามารถเชื่อมต่อได้</td></tr>`;
   }
+}
+
+// ---------------- เช็คกลับ 15:30 (เช็คอิสระ 5 หมวดเหมือนเช้า ไม่กรองจากข้อมูลเช้า) ----------------
+async function loadEveningData(dateStr) {
+  const body = document.getElementById('eveningBody');
+  body.innerHTML = `<tr><td colspan="9">กำลังโหลด...</td></tr>`;
+  try {
+    const res  = await fetch(`${SCRIPT_URL}?action=eveningByDate&date=${encodeURIComponent(dateStr)}`);
+    const json = await res.json();
+    if (json.status !== 'ok') { body.innerHTML = `<tr><td colspan="9">${json.message || 'เกิดข้อผิดพลาด'}</td></tr>`; return; }
+    window._eveningRooms = json.rooms; // เก็บไว้ผสมกับ % จาก attendanceRate ที่โหลดคนละจังหวะ
+    renderEveningTable(json.rooms, window._rateByRoom || {});
+
+    // เก็บเวลาที่ส่งเย็นไว้ผสมกับตารางเช้า (คอลัมน์ "เวลาที่ส่ง (เช้า/เย็น)") — คนละ endpoint คนละ
+    // จังหวะเวลาโหลดกับตารางเช้า (เหมือนปัญหาเดียวกับ % มาเรียนรวม) ต้อง re-render ตารางเช้าซ้ำ
+    // ตอนข้อมูลเย็นมาถึง ถ้าตารางเช้า render ไปแล้วก่อนหน้านี้
+    window._eveningTimeByRoom = Object.fromEntries(json.rooms.filter(r => r.submitted).map(r => [r.room, r.time]));
+    if (window._morningRooms) renderTable(window._morningRooms);
+  } catch {
+    body.innerHTML = `<tr><td colspan="9">ไม่สามารถเชื่อมต่อได้</td></tr>`;
+  }
+}
+
+function renderEveningTable(rooms, rateByRoom) {
+  const body = document.getElementById('eveningBody');
+  if (!rooms.length) { body.innerHTML = `<tr><td colspan="9">ยังไม่มีห้องในระบบ</td></tr>`; return; }
+
+  body.innerHTML = rooms.map(r => {
+    const rateInfo = rateByRoom[r.room];
+    const rateCell = rateInfo && rateInfo.rate !== null ? `${rateInfo.rate}%` : '-';
+    if (!r.submitted) {
+      return `<tr><td>${r.room}</td><td><span class="status-no">⏳ ยังไม่ส่งเช็คกลับ</span></td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>${rateCell}</td><td>-</td></tr>`;
+    }
+    return `<tr><td>${r.room}</td><td><span class="status-yes">ส่งแล้ว</span></td><td>${r.present}</td><td>${r.absent.total}</td><td>${r.personalLeave.total}</td><td>${r.sickLeave.total}</td><td>${r.activity.total}</td><td>${rateCell}</td><td>${r.time}</td></tr>`;
+  }).join('');
+}
+
+// ---------------- เทียบเช้า-เย็นอัตโนมัติ: รายชื่อสาย/หนี + % มาเรียนรวม ----------------
+// % มาเรียนรวม = (ปกติ+สาย) / ทั้งหมด — สมมติฐานที่ Cody ตั้งเอง (นับสายเป็นมาเรียน) ยังไม่ได้
+// ยืนยันกับครู 100% ถ้าจะเปลี่ยนสูตรแก้ที่ getAttendanceRateData() ใน apps-script.gs
+async function loadComparisonAndRate(dateStr) {
+  try {
+    const [cmpRes, rateRes] = await Promise.all([
+      fetch(`${SCRIPT_URL}?action=dailyComparison&date=${encodeURIComponent(dateStr)}`),
+      fetch(`${SCRIPT_URL}?action=attendanceRate&date=${encodeURIComponent(dateStr)}`),
+    ]);
+    const cmpJson  = await cmpRes.json();
+    const rateJson = await rateRes.json();
+
+    if (rateJson.status === 'ok') {
+      window._rateByRoom = Object.fromEntries(rateJson.rooms.map(r => [r.room, r]));
+      renderSchoolRateTile(rateJson.schoolRate);
+      if (window._eveningRooms) renderEveningTable(window._eveningRooms, window._rateByRoom);
+    }
+    if (cmpJson.status === 'ok') renderLateAbsconderList(cmpJson.rooms, dateStr);
+  } catch { /* ไม่บล็อกส่วนอื่นของแดชบอร์ดถ้าเปรียบเทียบเช้า-เย็นโหลดไม่สำเร็จ */ }
+}
+
+// เพิ่ม tile "% มาเรียนรวมทั้งโรงเรียน" ต่อท้าย totalsGrid ที่ renderTotals() สร้างไว้แล้ว —
+// แยกฟังก์ชันเพราะข้อมูล % มาจากคนละ endpoint คนละจังหวะเวลาโหลด (ช้ากว่า bydate เล็กน้อย)
+function renderSchoolRateTile(schoolRate) {
+  const grid = document.getElementById('totalsGrid');
+  const old = document.getElementById('schoolRateTile');
+  if (old) old.remove();
+  const tile = document.createElement('div');
+  tile.className = 'total-tile';
+  tile.id = 'schoolRateTile';
+  tile.innerHTML = `<div class="num">${schoolRate !== null && schoolRate !== undefined ? schoolRate + '%' : '-'}</div><div class="lbl">% มาเรียนรวม (เช้า+เย็นครบ)</div>`;
+  grid.appendChild(tile);
+}
+
+function renderLateAbsconderList(rooms, dateStr) {
+  const lines = [];
+  rooms.forEach(r => {
+    r.students.forEach(s => {
+      if (s.result === 'สาย' || s.result === 'หนี') lines.push(`${s.name} — ${r.room} — ${s.result}`);
+    });
+  });
+  const header = `รายชื่อสาย/หนี (เทียบเช้า-เย็นอัตโนมัติ) วันที่ ${thaiDateLabel(dateStr)}`;
+  document.getElementById('lateAbsconderText').value = lines.length
+    ? `${header}\n\n${lines.join('\n')}`
+    : `${header}\n\nไม่มีนักเรียนสาย/หนีในวันนี้ (เฉพาะห้องที่เช็คครบทั้งเช้า-เย็นแล้ว)`;
+  document.getElementById('lateAbsconderNote').textContent = lines.length
+    ? `รวม ${lines.length} คน (เฉพาะห้องที่เช็คครบทั้งเช้า-เย็นแล้ว)`
+    : '';
+}
+
+async function copyLateAbsconderList() {
+  const textarea = document.getElementById('lateAbsconderText');
+  try {
+    await navigator.clipboard.writeText(textarea.value);
+    showLateCopyFeedback('คัดลอกแล้ว ✓');
+  } catch {
+    textarea.select();
+    try {
+      document.execCommand('copy');
+      showLateCopyFeedback('คัดลอกแล้ว ✓');
+    } catch {
+      showLateCopyFeedback('คัดลอกอัตโนมัติไม่ได้ กรุณากด Ctrl+C เอง (เลือกข้อความให้แล้ว)');
+    }
+  }
+}
+
+function showLateCopyFeedback(msg) {
+  const note = document.getElementById('lateAbsconderNote');
+  const original = note.textContent;
+  note.textContent = msg;
+  setTimeout(() => { note.textContent = original; }, 2500);
 }
 
 function renderTotals(t) {
@@ -165,18 +291,17 @@ function renderTotals(t) {
     : 'ยอดรวมนี้ครบทุกห้องแล้ว';
 }
 
-const isJunior = room => room.startsWith('ม.1') || room.startsWith('ม.2') || room.startsWith('ม.3');
-const isSenior = room => room.startsWith('ม.4') || room.startsWith('ม.5') || room.startsWith('ม.6');
+// เดิมมี isJunior/isSenior + แถวรวม ม.ต้น/ม.ปลาย แยกชาย/หญิง — ตัดออกแล้ว 2569 ตามที่ครูสั่ง
+// เหลือแค่แถวรายห้อง + แถว "รวมทั้งสิ้น" ท้ายสุด ไม่แยกเพศ ใช้ % มาเรียนแทน
 
-function zeroCat() { return { male: 0, female: 0, total: 0 }; }
-function addCat(target, src) { target.male += src.male; target.female += src.female; target.total += src.total; }
+function zeroCat() { return { total: 0 }; }
+function addCat(target, src) { target.total += src.total; }
 
-// รวมข้อมูลของกลุ่มห้อง (matchFn ตรวจจากชื่อห้อง) — ตัวเลขหมวดต่างๆ นับเฉพาะห้องที่ส่งแล้วในกลุ่มนั้น
-function sumGroup(rooms, matchFn) {
-  const group = rooms.filter(r => matchFn(r.room));
+// รวมข้อมูลทุกห้องเป็นยอดเดียว (ใช้แค่แถว "รวมทั้งสิ้น" — ไม่มีแถวกลุ่ม ม.ต้น/ม.ปลาย อีกแล้ว)
+function sumGroup(rooms) {
   const roster = zeroCat(), present = zeroCat(), absent = zeroCat(), personalLeave = zeroCat(), sickLeave = zeroCat(), activity = zeroCat();
   let submittedCount = 0;
-  group.forEach(r => {
+  rooms.forEach(r => {
     addCat(roster, r.roster);
     if (r.submitted) {
       submittedCount++;
@@ -184,12 +309,23 @@ function sumGroup(rooms, matchFn) {
       addCat(personalLeave, r.personalLeave); addCat(sickLeave, r.sickLeave); addCat(activity, r.activity);
     }
   });
-  return { roster, present, absent, personalLeave, sickLeave, activity, submittedCount, count: group.length };
+  return { roster, present, absent, personalLeave, sickLeave, activity, submittedCount, count: rooms.length };
 }
 
 function catCells(cat, submitted) {
-  if (!submitted) return '<td>-</td><td>-</td><td>-</td>';
-  return `<td>${cat.male}</td><td>${cat.female}</td><td>${cat.total}</td>`;
+  if (!submitted) return '<td>-</td>';
+  return `<td>${cat.total}</td>`;
+}
+
+function rateCellFor(rate) {
+  return rate !== null && rate !== undefined ? `${rate}%` : '-';
+}
+
+// รวมเวลาที่ส่งเช้า+เย็นเป็นช่องเดียว "08:42 / 15:31" — ฝั่งไหนยังไม่ส่งใช้ "-" แทน
+function combinedTimeCell(r) {
+  const morningTime = r.submitted ? r.time : '-';
+  const eveningTime  = (window._eveningTimeByRoom || {})[r.room] || '-';
+  return `${morningTime} / ${eveningTime}`;
 }
 
 function renderRoomRow(r, i) {
@@ -198,13 +334,14 @@ function renderRoomRow(r, i) {
   const rows = [`
     <tr class="room-row" onclick="toggleDetail(${i})">
       <td>${r.room} ${r.submitted && hasNames ? '🔽' : ''}</td>
-      <td>${r.roster.male}</td><td>${r.roster.female}</td><td>${r.roster.total}</td>
+      <td>${r.roster.total}</td>
       ${catCells(r.present, r.submitted)}
       ${catCells(r.absent, r.submitted)}
       ${catCells(r.personalLeave, r.submitted)}
       ${catCells(r.sickLeave, r.submitted)}
       ${catCells(r.activity, r.submitted)}
-      <td>${r.submitted ? r.time : '<span class="status-no">ยังไม่ส่ง</span>'}</td>
+      <td>${r.submitted ? rateCellFor(r.rate) : '<span class="status-no">ยังไม่ส่ง</span>'}</td>
+      <td>${combinedTimeCell(r)}</td>
     </tr>
   `];
   if (r.submitted) {
@@ -225,21 +362,24 @@ function renderRoomRow(r, i) {
 
 function renderGroupRow(label, g) {
   const submitted = g.submittedCount > 0;
+  const rate = g.roster.total > 0 && submitted ? Math.round((g.present.total / g.roster.total) * 1000) / 10 : null;
   return `
-    <tr class="group-row">
+    <tr class="grand-row">
       <td>${label}</td>
-      <td>${g.roster.male}</td><td>${g.roster.female}</td><td>${g.roster.total}</td>
+      <td>${g.roster.total}</td>
       ${catCells(g.present, submitted)}
       ${catCells(g.absent, submitted)}
       ${catCells(g.personalLeave, submitted)}
       ${catCells(g.sickLeave, submitted)}
       ${catCells(g.activity, submitted)}
-      <td>${g.submittedCount}/${g.count} ห้อง</td>
+      <td>${rateCellFor(rate)}</td>
+      <td>-</td>
     </tr>
   `;
 }
 
 function renderTable(rooms) {
+  window._morningRooms = rooms; // เก็บไว้ให้ loadEveningData เรียก re-render ตอนเวลาส่งเย็นมาถึง
   const tbody = document.getElementById('tableBody');
   if (!rooms.length) {
     tbody.innerHTML = `<tr><td colspan="${COLS}">ยังไม่มีห้องในระบบ (ใส่ใน Sheet "ห้องเรียน")</td></tr>`;
@@ -247,32 +387,14 @@ function renderTable(rooms) {
   }
 
   let html = rooms.map((r, i) => renderRoomRow(r, i)).join('');
-
-  const juniorGroup = sumGroup(rooms, isJunior);
-  const seniorGroup = sumGroup(rooms, isSenior);
-  const allGroup     = sumGroup(rooms, () => true);
-
-  if (juniorGroup.count) html += renderGroupRow('รวม ม.ต้น', juniorGroup);
-  if (seniorGroup.count) html += renderGroupRow('รวม ม.ปลาย', seniorGroup);
-  html += `
-    <tr class="grand-row">
-      <td>รวมทั้งสิ้น</td>
-      <td>${allGroup.roster.male}</td><td>${allGroup.roster.female}</td><td>${allGroup.roster.total}</td>
-      ${catCells(allGroup.present, allGroup.submittedCount > 0)}
-      ${catCells(allGroup.absent, allGroup.submittedCount > 0)}
-      ${catCells(allGroup.personalLeave, allGroup.submittedCount > 0)}
-      ${catCells(allGroup.sickLeave, allGroup.submittedCount > 0)}
-      ${catCells(allGroup.activity, allGroup.submittedCount > 0)}
-      <td>${allGroup.submittedCount}/${allGroup.count} ห้อง</td>
-    </tr>
-  `;
+  html += renderGroupRow('รวมทั้งสิ้น', sumGroup(rooms));
 
   tbody.innerHTML = html;
 }
 
-// สร้างข้อความสรุปทั้งโรงเรียน แยกกลุ่ม ม.ต้น/ม.ปลาย + % มาเรียน — รูปแบบเดียวกับที่ระบบ
-// ส่งเข้า LINE อัตโนมัติตอนครบ 7/7 ห้อง แต่ตัวนี้ครูกดคัดลอกไปวางส่งต่อเองได้ (เช่น ใน OpenChat
-// ที่บอทเข้าไม่ได้) ไม่ต้องรอให้ครบทุกห้อง — กดคัดลอกได้ตลอดเวลาตามข้อมูล ณ ตอนนั้น
+// สร้างข้อความสรุปทั้งโรงเรียน แบบรายห้อง บรรทัดเดียวต่อห้อง — เดิมระบบเคย
+// ส่งเข้า LINE อัตโนมัติตอนครบ 7/7 ห้อง (ตัดออกถาวรแล้ว 2569) ตอนนี้ครูกดคัดลอกไปวางส่งต่อ
+// เอง (เช่น ใน OpenChat) แทน ไม่ต้องรอให้ครบทุกห้อง — กดคัดลอกได้ตลอดเวลาตามข้อมูล ณ ตอนนั้น
 function buildRoomLine(r) {
   if (!r.submitted) return `${r.room}: ⏳ ยังไม่ส่งข้อมูล`;
   const parts = [`ทั้งหมด ${r.roster.total}`, `มา ${r.present.total}`];

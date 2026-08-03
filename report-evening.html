@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>เช็คชื่อรายวัน (หัวหน้าห้อง) — เมืองแกพิทยาสรรค์</title>
+  <title>เช็คกลับตอนเย็น (หัวหน้าห้อง) — เมืองแกพิทยาสรรค์</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="assets/css/style.css">
   <style>
-    /* สไตล์เฉพาะหน้านี้ — รายการนักเรียนแต่ละคนมีปุ่มสถานะ 5 ปุ่ม ตรงตามฟอร์มกระดาษ */
+    /* สไตล์เฉพาะหน้านี้ — เหมือน report.html เป๊ะ (คัดลอก pattern มา) ต่างแค่ข้อความ */
     .student-row {
       display: flex; align-items: center; justify-content: space-between;
       gap: 0.75rem; padding: 0.65rem 0; border-bottom: 1px solid #eee;
@@ -38,7 +38,7 @@
   <a href="index.html" class="navbar-brand">📋 งานกิจการนักเรียน MKP</a>
   <ul class="navbar-nav">
     <li><a href="index.html">หน้าหลัก</a></li>
-    <li><a href="report-evening.html">เช็คกลับเย็น</a></li>
+    <li><a href="report.html">เช็คชื่อเช้า</a></li>
     <li><a href="dashboard.html">แดชบอร์ดเช็คชื่อ</a></li>
     <li><a href="behavior.html">คะแนนความประพฤติ</a></li>
     <li><a href="settings.html">⚙️ ตั้งค่าเบื้องหลัง</a></li>
@@ -46,13 +46,13 @@
 </nav>
 
 <div class="hero" style="padding:2rem;">
-  <h1>📋 เช็คชื่อรายวันตอนเช้า</h1>
-  <p>สำหรับหัวหน้าห้อง — รายงานทุกวันที่มีการเรียน เวลา 08:40</p>
+  <h1>🏠 เช็คกลับตอนเย็น</h1>
+  <p>สำหรับหัวหน้าห้อง — รายงานทุกวันที่มีการเรียน เวลา 15:30 (เช็คอิสระ ไม่เกี่ยวกับข้อมูลเช้า)</p>
 </div>
 
 <div class="container">
   <!-- ⚠️ PIN นี้เช็คฝั่ง client เท่านั้น กันแค่คนไม่ตั้งใจเปิดผิดหน้า ไม่ใช่การป้องกันข้อมูลจริงจัง
-       (ดูรายละเอียดข้อจำกัดเดียวกันที่ behavior.html) ใช้ PIN เดียวกับเช็คกลับตอนเย็น (tier "checkin") -->
+       ใช้ PIN เดียวกับเช็คชื่อเช้า (tier "checkin") -->
   <div id="pinGate" class="form-card">
     <div id="pinAlert" class="alert"></div>
     <div class="form-group">
@@ -65,7 +65,7 @@
   <div id="mainContent" style="display:none;">
     <div class="breadcrumb">
       <a href="index.html">หน้าหลัก</a><span>›</span>
-      เช็คชื่อรายวัน
+      เช็คกลับตอนเย็น
     </div>
 
     <div class="form-card" style="max-width:520px;">
@@ -83,7 +83,9 @@
 
     <div class="form-card" id="rosterBox" style="display:none;">
       <p style="color:var(--muted,#666); font-size:0.9rem;">
-        ค่าเริ่มต้นของทุกคนคือ <b>ปกติ</b> (มาเรียน) — กดเปลี่ยนเฉพาะคนที่ ขาด/ลากิจ/ลาป่วย/ไปกิจกรรม เท่านั้น
+        รายชื่อนี้คือนักเรียนทั้งหมดในห้อง (ไม่เกี่ยวกับข้อมูลเช้า — เช็คอิสระ) —
+        ค่าเริ่มต้นของทุกคนคือ <b>มา</b> กดเปลี่ยนเฉพาะคนที่ ขาด/ลากิจ/ลาป่วย/ไปกิจกรรม เท่านั้น
+        ระบบจะเทียบกับผลเช้าให้อัตโนมัติ (สาย/หนี) ในแดชบอร์ด
       </p>
       <div class="form-group">
         <label for="reporterName">ชื่อผู้รายงาน (ไม่บังคับ)</label>
@@ -105,7 +107,7 @@
 <script>
 const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxeKrhg8Kqk0RGR8c317KSMZ3oZXrTbDLi64mFvnVQW5KdCAB477Tm4MNAZp5b46qqs/exec';
 
-// ---------------- PIN gate (tier "checkin" — ใช้ร่วมกับ report-evening.html คนละไฟล์
+// ---------------- PIN gate (tier "checkin" — ใช้ร่วมกับ report.html คนละไฟล์
 // แต่ sessionStorage key เดียวกัน ('checkinPinOk') ใส่ครั้งเดียวใช้ได้ทั้งเช้า-เย็นในเซสชันเดียวกัน) ----------------
 async function checkPin() {
   const val = document.getElementById('pinInput').value.trim();
@@ -176,8 +178,7 @@ async function loadRoster() {
       return;
     }
     currentStudents = json.students;
-    // ล้างสถานะของห้องก่อนหน้าทิ้งก่อนเสมอ (บั๊กจริงที่เจอ 2026-08-03: ถ้าหัวหน้าห้องเปลี่ยนห้อง
-    // ในแท็บเดียวกันหลายรอบ ชื่อของห้องเก่าจะค้างใน statusMap แล้วพ่วงไปกับห้องใหม่ตอน submit)
+    // ล้างสถานะของห้องก่อนหน้าทิ้งก่อนเสมอ (บั๊กเดียวกับ report.html พบ 2026-08-03)
     Object.keys(statusMap).forEach(name => delete statusMap[name]);
     currentStudents.forEach(s => statusMap[s.name] = 'normal');
     renderRoster();
@@ -191,11 +192,12 @@ async function loadRoster() {
 
 async function checkAlreadySubmitted(room) {
   try {
-    const res  = await fetch(`${SCRIPT_URL}?action=mystatus&room=${encodeURIComponent(room)}`);
+    const res  = await fetch(`${SCRIPT_URL}?action=eveningByDate`);
     const json = await res.json();
-    if (json.status === 'ok' && json.submitted) {
-      const p = json.present, a = json.absent, pl = json.personalLeave, sl = json.sickLeave, ac = json.activity;
-      showAlert(`⚠️ ห้อง ${room} ส่งรายงานวันนี้ไปแล้วเมื่อเวลา ${json.time} น. (มา ${p.total} · ขาด ${a.total} · ลากิจ ${pl.total} · ลาป่วย ${sl.total} · ไปกิจกรรม ${ac.total}) — ถ้ากดส่งอีกครั้ง รายงานเดิมจะถูกแทนที่ด้วยอันใหม่`, 'error');
+    if (json.status !== 'ok') return;
+    const rec = json.rooms.find(r => r.room === room);
+    if (rec && rec.submitted) {
+      showAlert(`⚠️ ห้อง ${room} ส่งเช็คกลับวันนี้ไปแล้วเมื่อเวลา ${rec.time} น. (มา ${rec.present} · ขาด ${rec.absent.total} · ลากิจ ${rec.personalLeave.total} · ลาป่วย ${rec.sickLeave.total} · ไปกิจกรรม ${rec.activity.total}) — ถ้ากดส่งอีกครั้ง รายงานเดิมจะถูกแทนที่ด้วยอันใหม่`, 'error');
     }
   } catch { /* ไม่ต้องแจ้งเตือนถ้าเช็คไม่สำเร็จ ไม่ใช่ขั้นตอนที่จำเป็นต้องบล็อกการทำงาน */ }
 }
@@ -206,7 +208,7 @@ function renderRoster() {
     <div class="student-row">
       <span class="name">${s.no}. ${s.name}${s.gender ? `<span class="gender-tag">(${s.gender})</span>` : ''}</span>
       <div class="status-mini-grid" data-name="${s.name}">
-        ${btn(s.name, 'normal',   '✓ ปกติ')}
+        ${btn(s.name, 'normal',   '✓ มา')}
         ${btn(s.name, 'absent',   '✗ ขาด')}
         ${btn(s.name, 'personal', '📝 ลากิจ')}
         ${btn(s.name, 'sick',     '🤒 ลาป่วย')}
@@ -258,32 +260,30 @@ async function submitReport() {
     if (v === 'activity') activityNames.push(name);
   });
 
-  const btn = document.getElementById('submitBtn');
-  btn.disabled = true;
-  btn.textContent = 'กำลังส่ง...';
+  const btnEl = document.getElementById('submitBtn');
+  btnEl.disabled = true;
+  btnEl.textContent = 'กำลังส่ง...';
 
   const reporterName = document.getElementById('reporterName').value.trim();
 
   const payload = {
-    action: 'submit', room, reporterName,
+    action: 'submitEvening', room, reporterName,
     absentNames, personalLeaveNames, sickLeaveNames, activityNames,
-    timestamp: new Date().toLocaleString('th-TH'),
   };
 
   try {
     const res  = await fetch(SCRIPT_URL, { method: 'POST', body: JSON.stringify(payload) });
     const json = await res.json();
     if (json.status === 'ok') {
-      const p = json.present, a = json.absent, pl = json.personalLeave, sl = json.sickLeave, ac = json.activity;
-      showAlert(`✓ ส่งรายงานสำเร็จ! ห้อง ${room} — มา ${p.total} · ขาด ${a.total} · ลากิจ ${pl.total} · ลาป่วย ${sl.total} · ไปกิจกรรม ${ac.total}`, 'success');
+      showAlert(`✓ ส่งรายงานสำเร็จ! ห้อง ${room} — มา ${json.present} · ขาด ${json.absent} · ลากิจ ${json.personalLeave} · ลาป่วย ${json.sickLeave} · ไปกิจกรรม ${json.activity}`, 'success');
     } else {
       showAlert(json.message || 'เกิดข้อผิดพลาด', 'error');
     }
   } catch {
     showAlert('ไม่สามารถเชื่อมต่อได้ กรุณาลองใหม่', 'error');
   } finally {
-    btn.disabled = false;
-    btn.textContent = '✓ ส่งรายงาน';
+    btnEl.disabled = false;
+    btnEl.textContent = '✓ ส่งรายงาน';
   }
 }
 

@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ตั้งค่าเบื้องหลัง — เมืองแกพิทยาสรรค์</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/css/style.css">
+  <style>
+    .page-tabs { display: flex; border-bottom: 2px solid var(--border); margin: 1.5rem 0 1rem; max-width: 720px; flex-wrap: wrap; }
+    .page-tab {
+      flex: 1; min-width: 140px; padding: 0.7rem; text-align: center; background: none; border: none;
+      border-bottom: 3px solid transparent; margin-bottom: -2px; font-family: var(--font);
+      font-size: 0.95rem; font-weight: 600; cursor: pointer; color: var(--muted,#666);
+    }
+    .page-tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+    table.settings-table { width: 100%; border-collapse: collapse; background: #fff; max-width: 720px; }
+    table.settings-table th, table.settings-table td { padding: 0.5rem 0.6rem; border: 1px solid #eee; text-align: left; font-size: 0.9rem; }
+    table.settings-table th { background: #fafafa; }
+    .row-actions { display: flex; gap: 0.4rem; }
+    .row-actions button { padding: 0.3rem 0.6rem; font-size: 0.8rem; }
+    #pinGate { max-width: 400px; margin: 4rem auto; }
+    .pin-form-grid { display: grid; gap: 1.5rem; max-width: 720px; }
+  </style>
+</head>
+<body>
+
+<nav class="navbar">
+  <a href="index.html" class="navbar-brand">📋 งานกิจการนักเรียน MKP</a>
+  <ul class="navbar-nav">
+    <li><a href="index.html">หน้าหลัก</a></li>
+    <li><a href="report.html">เช็คชื่อเช้า</a></li>
+    <li><a href="report-evening.html">เช็คกลับเย็น</a></li>
+    <li><a href="dashboard.html">แดชบอร์ดเช็คชื่อ</a></li>
+    <li><a href="behavior.html">คะแนนความประพฤติ</a></li>
+  </ul>
+</nav>
+
+<div class="hero" style="padding:2rem;">
+  <h1>⚙️ ตั้งค่าเบื้องหลัง</h1>
+  <p>สำหรับผู้ดูแลระบบ — แก้ค่าตั้งค่าทุกอย่างได้เองไม่ต้องแก้โค้ด เพื่อให้ระบบดูแลต่อได้แม้ไม่มีครูภูริณัฐ</p>
+</div>
+
+<div class="container">
+  <div class="breadcrumb">
+    <a href="index.html">หน้าหลัก</a><span>›</span>
+    ตั้งค่าเบื้องหลัง
+  </div>
+
+  <!-- ⚠️ PIN นี้เช็คฝั่ง client เท่านั้น กันแค่คนไม่ตั้งใจเปิดผิดหน้า ไม่ใช่การป้องกันข้อมูลจริงจัง
+       เพราะ SCRIPT_URL ด้านล่างเป็น plaintext ในซอร์สโค้ดสาธารณะบน GitHub Pages อยู่ดี คนที่ตั้งใจ
+       เรียก endpoint ตรงๆ (ข้าม UI นี้ไปเลย) จะไม่ถูก PIN นี้กันเลย — หน้านี้เป็นหน้าที่อ่อนไหวที่สุด
+       ในระบบ (แก้ PIN อื่น/ห้อง/เกณฑ์คะแนนได้) ถ้าต้องการป้องกันจริงจังต้อง deploy Apps Script แบบ
+       ผูกกับ Google Workspace ของโดเมนโรงเรียน (ครูแจ้งว่าไม่มีโดเมนแบบนี้ ณ ตอนสร้างฟีเจอร์นี้ 2569) -->
+  <div id="pinGate" class="form-card">
+    <div id="pinAlert" class="alert"></div>
+    <div class="form-group">
+      <label for="pinInput">ใส่รหัส PIN เพื่อเข้าใช้งาน (8 หลัก)</label>
+      <input type="password" id="pinInput" class="form-control" inputmode="numeric" maxlength="8" placeholder="••••••••">
+    </div>
+    <button type="button" class="btn btn-primary btn-full" onclick="checkPin()">เข้าใช้งาน</button>
+  </div>
+
+  <div id="mainContent" style="display:none;">
+    <div class="page-tabs">
+      <button type="button" class="page-tab active" id="tabPin" onclick="switchTab('pin')">🔑 PIN</button>
+      <button type="button" class="page-tab" id="tabTerm" onclick="switchTab('term')">📅 ภาคเรียน</button>
+      <button type="button" class="page-tab" id="tabRooms" onclick="switchTab('rooms')">🏫 ห้องเรียน</button>
+      <button type="button" class="page-tab" id="tabCriteria" onclick="switchTab('criteria')">📋 เกณฑ์คะแนน</button>
+    </div>
+
+    <div id="alertBox" class="alert" style="max-width:720px;"></div>
+
+    <!-- ===== แท็บ 1: PIN ===== -->
+    <div id="pagePin">
+      <div class="pin-form-grid">
+        <div class="form-card">
+          <h3 style="margin-top:0;">PIN เช็คชื่อเช้า-เย็น (4 หลัก)</h3>
+          <p style="color:var(--muted,#666); font-size:0.85rem;">ใช้ร่วมกันทั้งหน้าเช็คชื่อเช้าและเช็คกลับเย็น</p>
+          <div class="form-group">
+            <input type="text" id="pinCheckin" class="form-control" inputmode="numeric" maxlength="4" placeholder="PIN ใหม่ 4 หลัก">
+          </div>
+          <button type="button" class="btn btn-primary" onclick="updatePin('checkin', 'pinCheckin')">บันทึก PIN นี้</button>
+        </div>
+        <div class="form-card">
+          <h3 style="margin-top:0;">PIN คะแนนความประพฤติ (6 หลัก)</h3>
+          <div class="form-group">
+            <input type="text" id="pinBehavior" class="form-control" inputmode="numeric" maxlength="6" placeholder="PIN ใหม่ 6 หลัก">
+          </div>
+          <button type="button" class="btn btn-primary" onclick="updatePin('behavior', 'pinBehavior')">บันทึก PIN นี้</button>
+        </div>
+        <div class="form-card">
+          <h3 style="margin-top:0;">PIN ตั้งค่าเบื้องหลัง (8 หลัก)</h3>
+          <p style="color:var(--muted,#666); font-size:0.85rem;">คือ PIN ของหน้านี้เอง — เปลี่ยนแล้วต้องจำให้ได้ ไม่มีการกู้คืน</p>
+          <div class="form-group">
+            <input type="text" id="pinSettings" class="form-control" inputmode="numeric" maxlength="8" placeholder="PIN ใหม่ 8 หลัก">
+          </div>
+          <button type="button" class="btn btn-primary" onclick="updatePin('settings', 'pinSettings')">บันทึก PIN นี้</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== แท็บ 2: ภาคเรียน ===== -->
+    <div id="pageTerm" style="display:none;">
+      <div class="form-card" style="max-width:520px;">
+        <h3 style="margin-top:0;">ภาคเรียนปัจจุบัน</h3>
+        <p style="color:var(--muted,#666); font-size:0.85rem;">
+          ใช้กำหนดว่าคะแนนความประพฤติของภาคเรียนไหนที่กำลังนับอยู่ (เริ่ม 100 คะแนนใหม่ทุกครั้งที่เปลี่ยนค่านี้)
+          ประวัติภาคเรียนเก่ายังอยู่ครบ ไม่ถูกลบ
+        </p>
+        <div class="form-group">
+          <label for="termInput">รูปแบบ เช่น "1/2569"</label>
+          <input type="text" id="termInput" class="form-control" placeholder="1/2569">
+        </div>
+        <button type="button" class="btn btn-primary" onclick="updateTerm()">บันทึกภาคเรียน</button>
+      </div>
+    </div>
+
+    <!-- ===== แท็บ 3: ห้องเรียน ===== -->
+    <div id="pageRooms" style="display:none;">
+      <div class="form-card" style="max-width:520px;">
+        <h3 style="margin-top:0;">เพิ่มห้องใหม่</h3>
+        <div class="form-group">
+          <input type="text" id="newRoomInput" class="form-control" placeholder="เช่น ม.4/2">
+        </div>
+        <button type="button" class="btn btn-primary" onclick="addRoom()">➕ เพิ่มห้อง</button>
+      </div>
+      <div style="max-width:720px; overflow-x:auto; margin-top:1rem;">
+        <table class="settings-table" id="roomsTable">
+          <thead><tr><th>ห้อง</th><th style="width:220px;">จัดการ</th></tr></thead>
+          <tbody id="roomsBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ===== แท็บ 4: เกณฑ์คะแนน ===== -->
+    <div id="pageCriteria" style="display:none;">
+      <div class="form-card" style="max-width:600px;">
+        <h3 style="margin-top:0;">เพิ่มเกณฑ์ใหม่</h3>
+        <div class="form-group">
+          <label for="newCritReason">เหตุผล</label>
+          <input type="text" id="newCritReason" class="form-control" placeholder="เช่น ลืมการบ้าน">
+        </div>
+        <div class="form-group">
+          <label for="newCritType">ประเภท</label>
+          <select id="newCritType" class="form-control">
+            <option value="หัก">หัก</option>
+            <option value="เพิ่ม">เพิ่ม</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="newCritPoints">คะแนน</label>
+          <input type="number" id="newCritPoints" class="form-control" min="1" placeholder="เช่น 5">
+        </div>
+        <button type="button" class="btn btn-primary" onclick="addCriteria()">➕ เพิ่มเกณฑ์</button>
+      </div>
+      <div style="max-width:720px; overflow-x:auto; margin-top:1rem;">
+        <table class="settings-table" id="criteriaTable">
+          <thead><tr><th>เหตุผล</th><th>ประเภท</th><th>คะแนน</th><th style="width:160px;">จัดการ</th></tr></thead>
+          <tbody id="criteriaBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="footer">
+  <p>โรงเรียนเมืองแกพิทยาสรรค์ — ระบบงานกิจการนักเรียน</p>
+</div>
+
+<script>
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxeKrhg8Kqk0RGR8c317KSMZ3oZXrTbDLi64mFvnVQW5KdCAB477Tm4MNAZp5b46qqs/exec';
+
+// ---------------- PIN gate (tier "settings", 8 หลัก) ----------------
+async function checkPin() {
+  const val = document.getElementById('pinInput').value.trim();
+  try {
+    const res  = await fetch(SCRIPT_URL, { method: 'POST', body: JSON.stringify({ action: 'verifyPin', tier: 'settings', pin: val }) });
+    const json = await res.json();
+    if (json.status === 'ok' && json.valid) {
+      sessionStorage.setItem('settingsPinOk', '1');
+      document.getElementById('pinGate').style.display = 'none';
+      document.getElementById('mainContent').style.display = 'block';
+      initApp();
+    } else {
+      const el = document.getElementById('pinAlert');
+      el.className = 'alert alert-error';
+      el.textContent = 'รหัส PIN ไม่ถูกต้อง';
+      el.style.display = 'block';
+    }
+  } catch {
+    const el = document.getElementById('pinAlert');
+    el.className = 'alert alert-error';
+    el.textContent = 'ไม่สามารถตรวจสอบ PIN ได้ กรุณาลองใหม่';
+    el.style.display = 'block';
+  }
+}
+
+if (sessionStorage.getItem('settingsPinOk') === '1') {
+  document.getElementById('pinGate').style.display = 'none';
+  document.getElementById('mainContent').style.display = 'block';
+  initApp();
+}
+
+// ---------------- Tabs ----------------
+function switchTab(tab) {
+  ['pin', 'term', 'rooms', 'criteria'].forEach(t => {
+    document.getElementById('tab' + capitalize(t)).classList.toggle('active', t === tab);
+    document.getElementById('page' + capitalize(t)).style.display = t === tab ? 'block' : 'none';
+  });
+}
+function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
+
+// ---------------- Init ----------------
+let settingsCache = { term: '', rooms: [], criteria: [] };
+
+async function initApp() {
+  await loadSettingsData();
+}
+
+async function loadSettingsData() {
+  try {
+    const res  = await fetch(`${SCRIPT_URL}?action=settingsData`);
+    const json = await res.json();
+    if (json.status !== 'ok') { showAlert(json.message || 'โหลดข้อมูลไม่สำเร็จ', 'error'); return; }
+    settingsCache = json;
+    document.getElementById('termInput').value = json.term || '';
+    renderRooms(json.rooms || []);
+    renderCriteria(json.criteria || []);
+  } catch {
+    showAlert('ไม่สามารถโหลดข้อมูลตั้งค่าได้ ตรวจสอบการเชื่อมต่อ', 'error');
+  }
+}
+
+// ---------------- PIN ทั้ง 3 ระดับ ----------------
+async function updatePin(tier, inputId) {
+  const newPin = document.getElementById(inputId).value.trim();
+  if (!newPin) { showAlert('กรุณาระบุ PIN ใหม่', 'error'); return; }
+  try {
+    const res  = await fetch(SCRIPT_URL, { method: 'POST', body: JSON.stringify({ action: 'updatePin', tier, newPin }) });
+    const json = await res.json();
+    if (json.status === 'ok') {
+      showAlert('✓ เปลี่ยน PIN สำเร็จ', 'success');
+      document.getElementById(inputId).value = '';
+    } else {
+      showAlert(json.message || 'เกิดข้อผิดพลาด', 'error');
+    }
+  } catch {
+    showAlert('ไม่สามารถเชื่อมต่อได้ กรุณาลองใหม่', 'error');
+  }
+}
+
+// ---------------- ภาคเรียน ----------------
+async function updateTerm() {
+  const term = document.getElementById('termInput').value.trim();
+  if (!term) { showAlert('กรุณาระบุภาคเรียน', 'error'); return; }
+  try {
+    const res  = await fetch(SCRIPT_URL, { method: 'POST', body: JSON.stringify({ action: 'updateTerm', term }) });
+    const json = await res.json();
+    if (json.status === 'ok') showAlert('✓ บันทึกภาคเรียนสำเร็จ — คะแนนความประพฤติจะเริ่มนับใหม่ 100 คะแนนสำหรับภาคเรียนนี้', 'success');
+    else showAlert(json.message || 'เกิดข้อผิดพลาด', 'error');
+  } catch {
+    showAlert('ไม่สามารถเชื่อมต่อได้ กรุณาลองใหม่', 'error');
+  }
+}
+
+// ---------------- ห้องเรียน ----------------
+function renderRooms(rooms) {
+  const body = document.getElementById('roomsBody');
+  if (!rooms.length) { body.innerHTML = '<tr><td colspan="2">ยังไม่มีห้องในระบบ</td></tr>'; return; }
+  body.innerHTML = rooms.map(room => `
+    <tr>
+      <td>${room}</td>
+      <td class="row-actions">
+        <button type="button" class="btn btn-outline" onclick="renameRoomPrompt('${escapeJs(room)}')">แก้ชื่อ</button>
+        <button type="button" class="btn btn-outline" onclick="deleteRoomConfirm('${escapeJs(room)}')">ลบ</button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+function escapeJs(s) { return String(s).replace(/'/g, "\\'"); }
+
+async function addRoom() {
+  const room = document.getElementById('newRoomInput').value.trim();
+  if (!room) { showAlert('กรุณาระบุชื่อห้อง', 'error'); return; }
+  try {
+    const res  = await fetch(SCRIPT_URL, { method: 'POST', body: JSON.stringify({ action: 'addRoom', room }) });
+    const json = await res.json();
+    if (json.status === 'ok') {
+      showAlert('✓ เพิ่มห้องสำเร็จ', 'success');
+      document.getElementById('newRoomInput').value = '';
+      loadSettingsData();
+    } else {
+      showAlert(json.message || 'เกิดข้อผิดพลาด', 'error');
+    }
+  } catch {
+    showAlert('ไม่สามารถเชื่อมต่อได้ กรุณาลองใหม่', 'error');
+  }
+}
+
+function renameRoomPrompt(oldRoom) {
+  const newRoom = prompt(`เปลี่ยนชื่อห้อง "${oldRoom}" เป็นชื่ออะไร?\n\n⚠️ ข้อมูลเช็คชื่อ/คะแนนความประพฤติเก่าทั้งหมดของห้องนี้จะย้ายไปอยู่ภายใต้ชื่อใหม่โดยอัตโนมัติ`, oldRoom);
+  if (!newRoom || newRoom.trim() === '' || newRoom.trim() === oldRoom) return;
+  renameRoom(oldRoom, newRoom.trim());
+}
+
+async function renameRoom(oldRoom, newRoom) {
+  try {
+    const res  = await fetch(SCRIPT_URL, { method: 'POST', body: JSON.stringify({ action: 'renameRoom', oldRoom, newRoom }) });
+    const json = await res.json();
+    if (json.status === 'ok') {
+      showAlert(`✓ เปลี่ยนชื่อห้องสำเร็จ (อัปเดต ${json.changedCount ?? 0} รายการในทุก Sheet)`, 'success');
+      loadSettingsData();
+    } else {
+      showAlert(json.message || 'เกิดข้อผิดพลาด', 'error');
+    }
+  } catch {
+    showAlert('ไม่สามารถเชื่อมต่อได้ กรุณาลองใหม่', 'error');
+  }
+}
+
+function deleteRoomConfirm(room) {
+  const ok = confirm(`ลบห้อง "${room}" ออกจากรายชื่อห้องเรียน?\n\n⚠️ ข้อมูลนักเรียน/ประวัติเช็คชื่อ/คะแนนเก่าของห้องนี้จะไม่ถูกลบ (แค่ห้องนี้จะไม่ขึ้นในลิสต์เลือกห้องอีก)`);
+  if (!ok) return;
+  deleteRoom(room);
+}
+
+async function deleteRoom(room) {
+  try {
+    const res  = await fetch(SCRIPT_URL, { method: 'POST', body: JSON.stringify({ action: 'deleteRoom', room }) });
+    const json = await res.json();
+    if (json.status === 'ok') { showAlert('✓ ลบห้องสำเร็จ', 'success'); loadSettingsData(); }
+    else showAlert(json.message || 'เกิดข้อผิดพลาด', 'error');
+  } catch {
+    showAlert('ไม่สามารถเชื่อมต่อได้ กรุณาลองใหม่', 'error');
+  }
+}
+
+// ---------------- เกณฑ์คะแนน ----------------
+function renderCriteria(criteria) {
+  const body = document.getElementById('criteriaBody');
+  if (!criteria.length) { body.innerHTML = '<tr><td colspan="4">ยังไม่มีเกณฑ์ในระบบ</td></tr>'; return; }
+  body.innerHTML = criteria.map(c => `
+    <tr>
+      <td>${c.reason}</td>
+      <td>${c.type}</td>
+      <td>${c.points}</td>
+      <td class="row-actions">
+        <button type="button" class="btn btn-outline" onclick="editCriteriaPrompt('${escapeJs(c.reason)}', '${escapeJs(c.type)}', ${c.points})">แก้ไข</button>
+        <button type="button" class="btn btn-outline" onclick="deleteCriteriaConfirm('${escapeJs(c.reason)}')">ลบ</button>
+      </td>
+    </tr>
+  `).join('');
+}
+
+async function addCriteria() {
+  const reason = document.getElementById('newCritReason').value.trim();
+  const type   = document.getElementById('newCritType').value;
+  const points = Number(document.getElementById('newCritPoints').value);
+  if (!reason || !points || points <= 0) { showAlert('กรุณาระบุเหตุผลและคะแนนให้ครบ', 'error'); return; }
+  try {
+    const res  = await fetch(SCRIPT_URL, { method: 'POST', body: JSON.stringify({ action: 'addCriteria', reason, type, points }) });
+    const json = await res.json();
+    if (json.status === 'ok') {
+      showAlert('✓ เพิ่มเกณฑ์สำเร็จ', 'success');
+      document.getElementById('newCritReason').value = '';
+      document.getElementById('newCritPoints').value = '';
+      loadSettingsData();
+    } else {
+      showAlert(json.message || 'เกิดข้อผิดพลาด', 'error');
+    }
+  } catch {
+    showAlert('ไม่สามารถเชื่อมต่อได้ กรุณาลองใหม่', 'error');
+  }
+}
+
+function editCriteriaPrompt(oldReason, oldType, oldPoints) {
+  const reason = prompt('แก้ไขเหตุผล:', oldReason);
+  if (reason === null) return;
+  const type = prompt('ประเภท (พิมพ์ "หัก" หรือ "เพิ่ม"):', oldType);
+  if (type === null) return;
+  const pointsStr = prompt('คะแนน:', String(oldPoints));
+  if (pointsStr === null) return;
+  const points = Number(pointsStr);
+  if (!reason.trim() || !points || points <= 0) { showAlert('ข้อมูลไม่ถูกต้อง ยกเลิกการแก้ไข', 'error'); return; }
+  updateCriteria(oldReason, reason.trim(), type.trim() === 'เพิ่ม' ? 'เพิ่ม' : 'หัก', points);
+}
+
+async function updateCriteria(oldReason, reason, type, points) {
+  try {
+    const res  = await fetch(SCRIPT_URL, { method: 'POST', body: JSON.stringify({ action: 'updateCriteria', oldReason, reason, type, points }) });
+    const json = await res.json();
+    if (json.status === 'ok') { showAlert('✓ แก้ไขเกณฑ์สำเร็จ', 'success'); loadSettingsData(); }
+    else showAlert(json.message || 'เกิดข้อผิดพลาด', 'error');
+  } catch {
+    showAlert('ไม่สามารถเชื่อมต่อได้ กรุณาลองใหม่', 'error');
+  }
+}
+
+function deleteCriteriaConfirm(reason) {
+  const ok = confirm(`ลบเกณฑ์ "${reason}" ออก?`);
+  if (!ok) return;
+  deleteCriteria(reason);
+}
+
+async function deleteCriteria(reason) {
+  try {
+    const res  = await fetch(SCRIPT_URL, { method: 'POST', body: JSON.stringify({ action: 'deleteCriteria', reason }) });
+    const json = await res.json();
+    if (json.status === 'ok') { showAlert('✓ ลบเกณฑ์สำเร็จ', 'success'); loadSettingsData(); }
+    else showAlert(json.message || 'เกิดข้อผิดพลาด', 'error');
+  } catch {
+    showAlert('ไม่สามารถเชื่อมต่อได้ กรุณาลองใหม่', 'error');
+  }
+}
+
+function showAlert(msg, type) {
+  const el = document.getElementById('alertBox');
+  el.className = `alert alert-${type}`;
+  el.textContent = msg;
+  el.style.display = 'block';
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  if (type === 'success') setTimeout(() => el.style.display = 'none', 4000);
+}
+</script>
+
+</body>
+</html>
