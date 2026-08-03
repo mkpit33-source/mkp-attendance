@@ -148,6 +148,7 @@ function init() {
 init();
 
 async function loadData(dateStr) {
+  dateStr = normalizeDateParam(dateStr);
   const tbody = document.getElementById('tableBody');
   tbody.innerHTML = `<tr><td colspan="${COLS}">กำลังโหลด...</td></tr>`;
   try {
@@ -433,8 +434,22 @@ async function copySchoolSummary() {
 // รวมรายชื่อทั้งหมดที่ขาด/ลากิจ/ลาป่วย/ไปกิจกรรม จากทุกห้องที่ส่งแล้ว เป็น list เดียว
 // เอาไปวางในกล่องข้อความให้คัดลอกไปใช้ต่อได้ง่าย (เช่น รายงาน ผอ. หรือติดตามนักเรียน)
 function thaiDateLabel(dateStr) {
+  dateStr = normalizeDateParam(dateStr);
   const d = new Date(dateStr + 'T00:00:00');
   return d.toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+function normalizeDateParam(value) {
+  const raw = String(value || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+  const m = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) {
+    const day = m[1].padStart(2, '0');
+    const month = m[2].padStart(2, '0');
+    const year = String(Number(m[3]) > 2400 ? Number(m[3]) - 543 : Number(m[3]));
+    return `${year}-${month}-${day}`;
+  }
+  return raw;
 }
 
 function renderAbsentList(rooms, dateStr) {
