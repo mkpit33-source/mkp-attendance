@@ -96,6 +96,16 @@
 
     <div class="form-card" style="margin-top:1.5rem;">
       <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
+        <h3 style="margin:0;">📢 สรุปทั้งโรงเรียน (พร้อมส่งต่อ)</h3>
+        <button type="button" class="btn btn-primary" onclick="copySchoolSummary()">📋 คัดลอกสรุป</button>
+      </div>
+      <p class="summary-line" id="schoolSummaryNote" style="color:var(--muted,#666); font-size:0.85rem; margin-top:0.3rem;">ใช้กดคัดลอกไปวางส่งต่อในกลุ่ม LINE/OpenChat เองได้เลย</p>
+      <textarea id="schoolSummaryText" readonly rows="14"
+        style="width:100%; margin-top:0.5rem; font-family:inherit; font-size:0.9rem; padding:0.6rem; border:1px solid #ddd; border-radius:8px; resize:vertical;"></textarea>
+    </div>
+
+    <div class="form-card" style="margin-top:1.5rem;">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
         <h3 style="margin:0;">📋 รายชื่อทั้งหมดที่ขาด/ลา/ไปกิจกรรม</h3>
         <button type="button" class="btn btn-primary" onclick="copyAbsentList()">📋 คัดลอกรายชื่อ</button>
       </div>
@@ -133,6 +143,7 @@ async function loadData(dateStr) {
     }
     renderTotals(json.totals);
     renderTable(json.rooms);
+    renderSchoolSummary(json.rooms, dateStr);
     renderAbsentList(json.rooms, dateStr);
   } catch {
     tbody.innerHTML = `<tr><td colspan="${COLS}">ไม่สามารถเชื่อมต่อได้</td></tr>`;
@@ -153,6 +164,9 @@ function renderTotals(t) {
     ? '* ยอดรวมนับเฉพาะห้องที่ส่งรายงานแล้วเท่านั้น ยังมีบางห้องไม่ส่ง'
     : 'ยอดรวมนี้ครบทุกห้องแล้ว';
 }
+
+const isJunior = room => room.startsWith('ม.1') || room.startsWith('ม.2') || room.startsWith('ม.3');
+const isSenior = room => room.startsWith('ม.4') || room.startsWith('ม.5') || room.startsWith('ม.6');
 
 function zeroCat() { return { male: 0, female: 0, total: 0 }; }
 function addCat(target, src) { target.male += src.male; target.female += src.female; target.total += src.total; }
@@ -232,9 +246,6 @@ function renderTable(rooms) {
     return;
   }
 
-  const isJunior = room => /^ม\.[1-3]\b/.test(room) || room.startsWith('ม.1') || room.startsWith('ม.2') || room.startsWith('ม.3');
-  const isSenior = room => room.startsWith('ม.4') || room.startsWith('ม.5') || room.startsWith('ม.6');
-
   let html = rooms.map((r, i) => renderRoomRow(r, i)).join('');
 
   const juniorGroup = sumGroup(rooms, isJunior);
@@ -257,6 +268,66 @@ function renderTable(rooms) {
   `;
 
   tbody.innerHTML = html;
+}
+
+// สร้างข้อความสรุปทั้งโรงเรียน แยกกลุ่ม ม.ต้น/ม.ปลาย + % มาเรียน — รูปแบบเดียวกับที่ระบบ
+// ส่งเข้า LINE อัตโนมัติตอนครบ 7/7 ห้อง แต่ตัวนี้ครูกดคัดลอกไปวางส่งต่อเองได้ (เช่น ใน OpenChat
+// ที่บอทเข้าไม่ได้) ไม่ต้องรอให้ครบทุกห้อง — กดคัดลอกได้ตลอดเวลาตามข้อมูล ณ ตอนนั้น
+function renderSchoolSummary(rooms, dateStr) {
+  const junior = sumGroup(rooms, isJunior);
+  const senior = sumGroup(rooms, isSenior);
+  const all    = sumGroup(rooms, () => true);
+  const rate   = all.roster.total > 0 ? (all.present.total / all.roster.total * 100).toFixed(2) : '0.00';
+
+  const lines = [];
+  lines.push('📢 สรุปการมาเรียนทั้งโรงเรียน');
+  lines.push(`วันที่ ${thaiDateLabel(dateStr)}`);
+  lines.push('');
+  if (junior.count) {
+    lines.push('ระดับ ม.ต้น');
+    lines.push(`ทั้งหมด ${junior.roster.total} คน`);
+    lines.push(`มาเรียน ${junior.present.total} คน`);
+    lines.push(`ขาด ${junior.absent.total} คน`);
+    lines.push(`ลากิจ ${junior.personalLeave.total} คน`);
+    lines.push(`ลาป่วย ${junior.sickLeave.total} คน`);
+    lines.push(`ไปกิจกรรม ${junior.activity.total} คน`);
+    lines.push('');
+  }
+  if (senior.count) {
+    lines.push('ระดับ ม.ปลาย');
+    lines.push(`ทั้งหมด ${senior.roster.total} คน`);
+    lines.push(`มาเรียน ${senior.present.total} คน`);
+    lines.push(`ขาด ${senior.absent.total} คน`);
+    lines.push(`ลากิจ ${senior.personalLeave.total} คน`);
+    lines.push(`ลาป่วย ${senior.sickLeave.total} คน`);
+    lines.push(`ไปกิจกรรม ${senior.activity.total} คน`);
+    lines.push('');
+  }
+  lines.push(`รวมทั้งโรงเรียน ${all.roster.total} คน`);
+  lines.push(`มาเรียนคิดเป็น ${rate}%`);
+  lines.push('');
+  lines.push(`ส่งข้อมูลครบ ${all.submittedCount}/${all.count} ห้อง`);
+
+  document.getElementById('schoolSummaryText').value = lines.join('\n');
+}
+
+async function copySchoolSummary() {
+  const textarea = document.getElementById('schoolSummaryText');
+  const note = document.getElementById('schoolSummaryNote');
+  const original = note.textContent;
+  try {
+    await navigator.clipboard.writeText(textarea.value);
+    note.textContent = 'คัดลอกแล้ว ✓';
+  } catch {
+    textarea.select();
+    try {
+      document.execCommand('copy');
+      note.textContent = 'คัดลอกแล้ว ✓';
+    } catch {
+      note.textContent = 'คัดลอกอัตโนมัติไม่ได้ กรุณากด Ctrl+C เอง (เลือกข้อความให้แล้ว)';
+    }
+  }
+  setTimeout(() => { note.textContent = original; }, 2500);
 }
 
 // รวมรายชื่อทั้งหมดที่ขาด/ลากิจ/ลาป่วย/ไปกิจกรรม จากทุกห้องที่ส่งแล้ว เป็น list เดียว

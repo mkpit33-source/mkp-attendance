@@ -41,9 +41,14 @@
 //     ~09:00              → สรุปทั้งโรงเรียนอีกรอบเผื่อสำรอง (sendDailySummary)
 //     (ถ้าอยากเปลี่ยนเวลาไหน แก้ที่ฟังก์ชัน createDailyTrigger() ในโค้ดนี้ได้เลย
 //      หาคำว่า .atHour(...).nearMinute(...) ของ trigger นั้นแล้วแก้เลขชั่วโมง/นาทีตามต้องการ)
-//  8. เปิด https://notify-bot.line.me/th/ (ต้อง login LINE ก่อน)
-//     กด "เชื่อมต่อกับ LINE Notify" → เลือกกลุ่ม LINE ที่ต้องการให้บอทส่งข้อความเข้าไป
-//     → จะได้ "Access Token" มา 1 อัน (ยาวๆ) คัดลอกมาใส่แทนที่ LINE_NOTIFY_TOKEN ด้านล่าง
+//  8. (LINE Notify ปิดให้บริการไปแล้วตั้งแต่ 31 มี.ค. 2568 — ใช้ LINE Official Account + Messaging API แทน)
+//     สร้าง LINE Official Account ใหม่แยกต่างหาก (ไม่ใช้บัญชีเดิมที่มีคนแอดไว้เพื่อเรื่องอื่น) ที่
+//     https://manager.line.biz → เปิดเมนู "ตั้งค่า" > "Messaging API" > เปิดใช้งาน
+//     → ไปที่ LINE Developers Console ของ Channel นั้น > แท็บ "Messaging API"
+//     → หัวข้อ "Channel access token (long-lived)" กด "Issue" จะได้ Token ยาวๆ
+//     คัดลอกมาใส่แทนที่ LINE_CHANNEL_ACCESS_TOKEN ด้านล่าง
+//     จากนั้นให้ครูทุกคนสแกน QR Code ของบัญชีนี้ (ดูได้ในหน้า LINE Official Account Manager)
+//     เพื่อแอดเป็นเพื่อน — ระบบจะส่งข้อความแบบ "Broadcast" กระจายให้ทุกคนที่แอดพร้อมกันโดยอัตโนมัติ
 //  9. (ไม่บังคับ) นำลิงก์หน้า report.html จริง มาใส่แทนที่ REPORT_PAGE_URL ด้านล่าง
 //     เพื่อให้ข้อความแจ้งเตือนมีลิงก์ให้กดตรงได้เลย
 //  10. ก่อนรันข้อถัดไป เช็คเขตเวลาของโปรเจกต์ก่อน: เมนูฟันเฟือง (Project Settings) ทางซ้าย
@@ -61,8 +66,11 @@
 const SPREADSHEET_ID = '1CkgncHeiyJJv5Mixbe39DEphABpMPmEYRGAM2OsBKlI';
 const TZ = 'Asia/Bangkok'; // ใช้เวลาไทยเป็นหลักเสมอ กันปัญหาเรื่องเขตเวลาของเซิร์ฟเวอร์ Google
 
-// token สำหรับให้ระบบส่งข้อความเข้ากลุ่ม LINE เท่านั้น (ไม่ใช่รหัสผ่านให้คนกรอก)
-const LINE_NOTIFY_TOKEN = 'ใส่ Access Token จาก LINE Notify ตรงนี้';
+// ⚠️ Token นี้คือรหัสจริงที่ให้สิทธิ์ส่งข้อความแทนบัญชี LINE — เป็นความลับ ห้ามเผยแพร่เด็ดขาด
+//    (คนละเรื่องกับ PIN/รหัสผ่านที่ตัดออกไปแล้ว — อันนั้นคือรหัสให้คนกรอก อันนี้คือกุญแจ API)
+//    ไฟล์นี้เก็บอยู่ใน GitHub แบบสาธารณะ จึงต้องปล่อยให้เป็นข้อความ placeholder ตรงนี้เสมอ —
+//    ให้นำ Token จริงไปแทนที่ตรงนี้เฉพาะในหน้า Apps Script editor เท่านั้น (ไม่ใช่ไฟล์ที่จะ push ขึ้น GitHub)
+const LINE_CHANNEL_ACCESS_TOKEN = 'ใส่ Channel access token จาก LINE Developers Console ตรงนี้ (เฉพาะใน Apps Script editor เท่านั้น ห้ามใส่ในไฟล์ที่จะขึ้น GitHub)';
 const REPORT_PAGE_URL = 'ใส่ลิงก์หน้า report.html ตรงนี้ (ไม่บังคับ เว้นว่างไว้ก็ได้)';
 
 // ------------------------------------------------------------
@@ -615,10 +623,11 @@ function isSeniorRoom(room) { return room.indexOf('ม.4') === 0 || room.indexOf
 // ------------------------------------------------------------
 function sendLineNotify(message) {
   try {
-    UrlFetchApp.fetch('https://notify-api.line.me/api/notify', {
+    UrlFetchApp.fetch('https://api.line.me/v2/bot/message/broadcast', {
       method: 'post',
-      headers: { Authorization: 'Bearer ' + LINE_NOTIFY_TOKEN },
-      payload: { message },
+      contentType: 'application/json',
+      headers: { Authorization: 'Bearer ' + LINE_CHANNEL_ACCESS_TOKEN },
+      payload: JSON.stringify({ messages: [{ type: 'text', text: message }] }),
     });
   } catch (err) {
     Logger.log('ส่ง LINE ไม่สำเร็จ: ' + err.toString());
