@@ -86,6 +86,40 @@
     </div>
 
     <div class="form-card" style="margin-top:1.5rem;">
+      <h3 style="margin:0 0 0.75rem;">📈 สรุปตามช่วงเวลา</h3>
+      <div style="display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:0.75rem; align-items:end;">
+        <div>
+          <label for="rangeStartDate">วันที่เริ่ม</label>
+          <input type="date" id="rangeStartDate" class="form-control">
+        </div>
+        <div>
+          <label for="rangeEndDate">วันที่สิ้นสุด</label>
+          <input type="date" id="rangeEndDate" class="form-control">
+        </div>
+        <button type="button" class="btn btn-primary" onclick="loadCustomRangeSummary()">ดูสรุปช่วงวันที่</button>
+      </div>
+      <div style="display:flex; gap:0.5rem; flex-wrap:wrap; margin-top:0.75rem;">
+        <button type="button" class="btn btn-outline" onclick="setRangePreset('week')">รายสัปดาห์</button>
+        <button type="button" class="btn btn-outline" onclick="setRangePreset('month')">รายเดือน</button>
+        <button type="button" class="btn btn-outline" onclick="setRangePreset('term')">รายเทอม</button>
+      </div>
+      <p class="summary-line" id="rangeSummaryNote" style="color:var(--muted,#666); font-size:0.85rem; margin-top:0.5rem;">
+        เลือกวันที่เริ่ม-สิ้นสุดเอง หรือใช้ปุ่มลัดรายสัปดาห์/รายเดือน
+      </p>
+      <div class="totals-grid" id="rangeTotalsGrid" style="display:none;"></div>
+      <div class="table-wrap" id="rangeTableWrap" style="display:none;">
+        <table class="att-table">
+          <thead>
+            <tr>
+              <th>ห้อง</th><th>วันที่ส่ง</th><th>มา</th><th>ขาด</th><th>ลากิจ</th><th>ลาป่วย</th><th>ไปกิจกรรม</th><th>% มาเรียนสะสม</th>
+            </tr>
+          </thead>
+          <tbody id="rangeTableBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="form-card" style="margin-top:1.5rem;">
       <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
         <h3 style="margin:0;">📢 สรุปทั้งโรงเรียน (พร้อมส่งต่อ)</h3>
         <button type="button" class="btn btn-primary" onclick="copySchoolSummary()">📋 คัดลอกสรุป</button>
@@ -137,12 +171,15 @@
 </div>
 
 <script>
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbx6RYUPEdjvk0UgDOrWK-_mkFws0fGTtz1udxBcSGaNDzWktUlItyeuN5sSii5DC8J7/exec';
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxaWr7ze987_kshAusuikxaDgwGTiHu7-3JI4VVCsKx6ElHFx5xq1Wh0R4utAecSQ1O/exec';
 const COLS = 9; // ห้อง, จำนวนเต็ม, มา, ขาด, ลากิจ, ลาป่วย, ไปกิจกรรม, % มาเรียน, เวลาที่ส่ง (เดิม 20 คอลัมน์ตอนแยกชาย/หญิง)
 
 function init() {
   const today = new Date().toLocaleDateString('sv-SE'); // yyyy-MM-dd ตามเวลาเครื่องผู้ใช้
   document.getElementById('datePicker').value = today;
+  const monthRange = getMonthRange(today);
+  document.getElementById('rangeStartDate').value = monthRange.startDate;
+  document.getElementById('rangeEndDate').value = monthRange.endDate;
   loadData(today);
 }
 init();
@@ -167,6 +204,133 @@ async function loadData(dateStr) {
   } catch {
     tbody.innerHTML = `<tr><td colspan="${COLS}">ไม่สามารถเชื่อมต่อได้</td></tr>`;
   }
+}
+
+function setRangePreset(mode) {
+  const selectedDate = normalizeDateParam(document.getElementById('datePicker').value);
+  const note = document.getElementById('rangeSummaryNote');
+
+  if (mode === 'term') {
+    note.textContent = 'กำลังตรวจค่าภาคเรียน...';
+    loadTermRangeNote();
+    return;
+  }
+
+  const range = mode === 'week' ? getSchoolWeekRange(selectedDate) : getMonthRange(selectedDate);
+  const label = mode === 'week'
+    ? `รายสัปดาห์ จันทร์-อาทิตย์ (${thaiDateLabel(range.startDate)} - ${thaiDateLabel(range.endDate)})`
+    : `รายเดือน (${thaiMonthLabel(selectedDate)})`;
+
+  document.getElementById('rangeStartDate').value = range.startDate;
+  document.getElementById('rangeEndDate').value = range.endDate;
+  loadRangeSummary(range.startDate, range.endDate, label);
+}
+
+async function loadTermRangeNote() {
+  try {
+    const res = await fetch(`${SCRIPT_URL}?action=settingsData`);
+    const json = await res.json();
+    const term = json.term || 'ยังไม่ระบุ';
+    document.getElementById('rangeSummaryNote').textContent = `รายเทอม: ภาคเรียนปัจจุบันคือ ${term} แต่ยังไม่ได้ตั้งค่าวันเริ่ม-สิ้นสุดภาคเรียนในหน้าตั้งค่า จึงยังสรุปรายเทอมไม่ได้`;
+  } catch {
+    document.getElementById('rangeSummaryNote').textContent = 'ไม่สามารถโหลดค่าภาคเรียนได้';
+  }
+}
+
+function loadCustomRangeSummary() {
+  const startDate = normalizeDateParam(document.getElementById('rangeStartDate').value);
+  const endDate = normalizeDateParam(document.getElementById('rangeEndDate').value);
+  const note = document.getElementById('rangeSummaryNote');
+  if (!startDate || !endDate) {
+    note.textContent = 'กรุณาเลือกวันที่เริ่มและวันที่สิ้นสุด';
+    return;
+  }
+  const label = `ช่วงวันที่ ${thaiDateLabel(startDate)} - ${thaiDateLabel(endDate)}`;
+  loadRangeSummary(startDate, endDate, label);
+}
+
+async function loadRangeSummary(startDate, endDate, label) {
+  const note = document.getElementById('rangeSummaryNote');
+  const grid = document.getElementById('rangeTotalsGrid');
+  const wrap = document.getElementById('rangeTableWrap');
+  const body = document.getElementById('rangeTableBody');
+
+  grid.style.display = 'none';
+  wrap.style.display = 'none';
+  body.innerHTML = '';
+  note.textContent = `กำลังโหลด${label}...`;
+
+  try {
+    const res = await fetch(`${SCRIPT_URL}?action=rangeSummary&startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}`);
+    const json = await res.json();
+    if (json.status !== 'ok') {
+      note.textContent = json.message || 'โหลดสรุปช่วงเวลาไม่สำเร็จ';
+      return;
+    }
+    renderRangeSummary(json, label);
+  } catch {
+    note.textContent = 'ไม่สามารถเชื่อมต่อสรุปช่วงเวลาได้';
+  }
+}
+
+function renderRangeSummary(data, label) {
+  const note = document.getElementById('rangeSummaryNote');
+  const grid = document.getElementById('rangeTotalsGrid');
+  const wrap = document.getElementById('rangeTableWrap');
+  const body = document.getElementById('rangeTableBody');
+  const t = data.totals || {};
+
+  note.textContent = `${label} — นับจากห้องที่ส่งรายงานแล้วเท่านั้น ถ้าห้องเดียวกันส่งซ้ำในวันเดียวกัน ระบบใช้รายการล่าสุด`;
+  grid.style.display = 'grid';
+  grid.innerHTML = `
+    <div class="total-tile"><div class="num">${t.submittedRoomDays || 0}</div><div class="lbl">ครั้งที่ส่งรายงาน</div></div>
+    <div class="total-tile"><div class="num">${t.present?.total || 0}</div><div class="lbl">มา</div></div>
+    <div class="total-tile"><div class="num">${t.absent?.total || 0}</div><div class="lbl">ขาด</div></div>
+    <div class="total-tile"><div class="num">${t.personalLeave?.total || 0}</div><div class="lbl">ลากิจ</div></div>
+    <div class="total-tile"><div class="num">${t.sickLeave?.total || 0}</div><div class="lbl">ลาป่วย</div></div>
+    <div class="total-tile"><div class="num">${t.activity?.total || 0}</div><div class="lbl">ไปกิจกรรม</div></div>
+    <div class="total-tile"><div class="num">${t.rate == null ? '-' : t.rate + '%'}</div><div class="lbl">% มาเรียนสะสม</div></div>
+  `;
+
+  wrap.style.display = 'block';
+  body.innerHTML = (data.rooms || []).map(r => `
+    <tr>
+      <td>${r.room}</td>
+      <td>${r.submittedDays || '-'}</td>
+      <td>${r.submittedDays ? r.present.total : '-'}</td>
+      <td>${r.submittedDays ? r.absent.total : '-'}</td>
+      <td>${r.submittedDays ? r.personalLeave.total : '-'}</td>
+      <td>${r.submittedDays ? r.sickLeave.total : '-'}</td>
+      <td>${r.submittedDays ? r.activity.total : '-'}</td>
+      <td>${r.rate == null ? '-' : r.rate + '%'}</td>
+    </tr>
+  `).join('');
+}
+
+function getSchoolWeekRange(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  const day = d.getDay(); // Sunday=0, Monday=1
+  const diffToMonday = day === 0 ? -6 : 1 - day;
+  const monday = addDays(d, diffToMonday);
+  const sunday = addDays(monday, 6);
+  return { startDate: toDateInputValue(monday), endDate: toDateInputValue(sunday) };
+}
+
+function getMonthRange(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  const first = new Date(d.getFullYear(), d.getMonth(), 1);
+  const last = new Date(d.getFullYear(), d.getMonth() + 1, 0);
+  return { startDate: toDateInputValue(first), endDate: toDateInputValue(last) };
+}
+
+function addDays(date, days) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
+function toDateInputValue(date) {
+  return date.toLocaleDateString('sv-SE');
 }
 
 // ---------------- เช็คกลับ 15:30 (เช็คอิสระ 5 หมวดเหมือนเช้า ไม่กรองจากข้อมูลเช้า) ----------------
@@ -437,6 +601,12 @@ function thaiDateLabel(dateStr) {
   dateStr = normalizeDateParam(dateStr);
   const d = new Date(dateStr + 'T00:00:00');
   return d.toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+function thaiMonthLabel(dateStr) {
+  dateStr = normalizeDateParam(dateStr);
+  const d = new Date(dateStr + 'T00:00:00');
+  return d.toLocaleDateString('th-TH', { month: 'long', year: 'numeric' });
 }
 
 function normalizeDateParam(value) {

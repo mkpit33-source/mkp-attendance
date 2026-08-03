@@ -160,6 +160,7 @@ function doGet(e) {
     if (action === 'mystatus') return handleMyStatus(e.parameter);
     if (action === 'today')    return handleByDate(todayStr());
     if (action === 'bydate')   return handleByDate(e.parameter.date);
+    if (action === 'rangeSummary') return handleRangeSummary(e.parameter);
     // ---- งานกิจการนักเรียน: เช็คกลับ 15:30 ----
     if (action === 'eveningByDate')    return handleEveningByDate(e.parameter.date || todayStr());
     if (action === 'dailyComparison')  return handleDailyComparison(e.parameter);
@@ -431,6 +432,108 @@ function getDailySummaryData(dateStr) {
     rooms,
     totals: { ...grand, submittedCount, totalRooms: allRooms.length },
   };
+}
+
+function handleRangeSummary(params) {
+  const startDate = normalizeDateParam(params.startDate || '');
+  const endDate = normalizeDateParam(params.endDate || '');
+  if (!startDate || !endDate) return respond({ status: 'error', message: 'กรุณาระบุช่วงวันที่' });
+  if (startDate > endDate) return respond({ status: 'error', message: 'ช่วงวันที่ไม่ถูกต้อง' });
+  return respond(getRangeSummaryData(startDate, endDate));
+}
+
+function getRangeSummaryData(startDate, endDate) {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+
+  const roomRows = ss.getSheetByName('ห้องเรียน').getDataRange().getValues();
+  const allRooms = [];
+  for (let i = 1; i < roomRows.length; i++) {
+    const room = normalizeRoom(roomRows[i][0]);
+    if (room) allRooms.push(room);
+  }
+
+  const stuRows = ss.getSheetByName('นักเรียน').getDataRange().getValues();
+  const rosterTotals = {};
+  for (let i = 1; i < stuRows.length; i++) {
+    const room = normalizeRoom(stuRows[i][0]);
+    if (!room || !stuRows[i][2]) continue;
+    rosterTotals[room] = (rosterTotals[room] || 0) + 1;
+  }
+
+  const latestByDateRoom = {};
+  const logRows = ss.getSheetByName('เช็คชื่อรายวัน').getDataRange().getValues();
+  for (let i = 1; i < logRows.length; i++) {
+    const r = logRows[i];
+    const date = cellDateStr(r[0]);
+    if (date < startDate || date > endDate) continue;
+    const room = normalizeRoom(r[1]);
+    if (!room) continue;
+    latestByDateRoom[`${date}||${room}`] = r;
+  }
+
+  const roomMap = {};
+  allRooms.forEach(room => {
+    roomMap[room] = {
+      room,
+      roster: { total: rosterTotals[room] || 0 },
+      submittedDays: 0,
+      present: { total: 0 },
+      absent: { total: 0 },
+      personalLeave: { total: 0 },
+      sickLeave: { total: 0 },
+      activity: { total: 0 },
+    };
+  });
+
+  Object.keys(latestByDateRoom).forEach(key => {
+    const r = latestByDateRoom[key];
+    const room = normalizeRoom(r[1]);
+    if (!roomMap[room]) {
+      roomMap[room] = {
+        room,
+        roster: { total: rosterTotals[room] || 0 },
+        submittedDays: 0,
+        present: { total: 0 },
+        absent: { total: 0 },
+        personalLeave: { total: 0 },
+        sickLeave: { total: 0 },
+        activity: { total: 0 },
+      };
+    }
+    roomMap[room].submittedDays++;
+    roomMap[room].present.total += Number(r[3]) || 0;
+    roomMap[room].absent.total += Number(r[4]) || 0;
+    roomMap[room].personalLeave.total += Number(r[6]) || 0;
+    roomMap[room].sickLeave.total += Number(r[8]) || 0;
+    roomMap[room].activity.total += Number(r[10]) || 0;
+  });
+
+  const totals = {
+    submittedRoomDays: 0,
+    totalRooms: allRooms.length,
+    present: { total: 0 },
+    absent: { total: 0 },
+    personalLeave: { total: 0 },
+    sickLeave: { total: 0 },
+    activity: { total: 0 },
+  };
+
+  const rooms = allRooms.map(room => roomMap[room]).map(r => {
+    totals.submittedRoomDays += r.submittedDays;
+    totals.present.total += r.present.total;
+    totals.absent.total += r.absent.total;
+    totals.personalLeave.total += r.personalLeave.total;
+    totals.sickLeave.total += r.sickLeave.total;
+    totals.activity.total += r.activity.total;
+    const denominator = r.roster.total * r.submittedDays;
+    r.rate = denominator > 0 ? Math.round((r.present.total / denominator) * 1000) / 10 : null;
+    return r;
+  });
+
+  const totalPossible = rooms.reduce((sum, r) => sum + (r.roster.total * r.submittedDays), 0);
+  totals.rate = totalPossible > 0 ? Math.round((totals.present.total / totalPossible) * 1000) / 10 : null;
+
+  return { status: 'ok', startDate, endDate, rooms, totals };
 }
 
 // ==============================================================
