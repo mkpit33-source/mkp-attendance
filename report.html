@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>เช็คชื่อรายวัน (หัวหน้าห้อง) — เมืองแกพิทยาสรรค์</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/css/style.css">
+  <style>
+    /* สไตล์เฉพาะหน้านี้ — รายการนักเรียนแต่ละคนมีปุ่มสถานะ 5 ปุ่ม ตรงตามฟอร์มกระดาษ */
+    .student-row {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 0.75rem; padding: 0.65rem 0; border-bottom: 1px solid #eee;
+      flex-wrap: wrap;
+    }
+    .student-row .name { font-weight: 600; flex: 1 1 auto; min-width: 140px; }
+    .student-row .gender-tag { font-weight: 400; font-size: 0.8rem; color: var(--muted,#666); margin-left: 0.3rem; }
+    .status-mini-grid { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+    .status-mini-btn {
+      border: 2px solid #ddd; background: #fff; border-radius: 8px;
+      padding: 0.6rem 0.75rem; font-size: 0.85rem; cursor: pointer; white-space: nowrap;
+      min-height: 44px; min-width: 44px;
+    }
+    .status-mini-btn.sel-normal   { border-color: var(--green,#27ae60); background:#eafaf1; }
+    .status-mini-btn.sel-absent   { border-color: var(--accent,#e74c3c); background:#fdecea; }
+    .status-mini-btn.sel-personal { border-color: #f39c12; background:#fef5e7; }
+    .status-mini-btn.sel-sick     { border-color: #9b59b6; background:#f4ecf7; }
+    .status-mini-btn.sel-activity { border-color: #2980b9; background:#eaf2f8; }
+    #rosterBox { max-width: 680px; }
+    .summary-line { font-size: 0.9rem; color: var(--muted,#666); margin-top: 0.5rem; }
+  </style>
+</head>
+<body>
+
+<nav class="navbar">
+  <a href="index.html" class="navbar-brand">📋 เช็คชื่อรายวัน MKP</a>
+  <ul class="navbar-nav">
+    <li><a href="index.html">หน้าหลัก</a></li>
+    <li><a href="dashboard.html">แดชบอร์ดเช็คชื่อ</a></li>
+  </ul>
+</nav>
+
+<div class="hero" style="padding:2rem;">
+  <h1>📋 เช็คชื่อรายวันตอนเช้า</h1>
+  <p>สำหรับหัวหน้าห้อง — รายงานทุกวันที่มีการเรียน เวลา 08:40</p>
+</div>
+
+<div class="container">
+  <div class="breadcrumb">
+    <a href="index.html">หน้าหลัก</a><span>›</span>
+    เช็คชื่อรายวัน
+  </div>
+
+  <div class="form-card" style="max-width:520px;">
+    <div id="alertBox" class="alert"></div>
+
+    <div class="form-group">
+      <label for="room">ห้อง</label>
+      <select id="room" class="form-control">
+        <option value="">— กำลังโหลดรายชื่อห้อง... —</option>
+      </select>
+    </div>
+
+    <button type="button" class="btn btn-primary btn-full" onclick="loadRoster()">ดึงรายชื่อห้อง</button>
+  </div>
+
+  <div class="form-card" id="rosterBox" style="display:none;">
+    <p style="color:var(--muted,#666); font-size:0.9rem;">
+      ค่าเริ่มต้นของทุกคนคือ <b>ปกติ</b> (มาเรียน) — กดเปลี่ยนเฉพาะคนที่ ขาด/ลากิจ/ลาป่วย/ไปกิจกรรม เท่านั้น
+    </p>
+    <div class="form-group">
+      <label for="reporterName">ชื่อผู้รายงาน (ไม่บังคับ)</label>
+      <input type="text" id="reporterName" class="form-control" placeholder="เช่น นาย/นางสาว ชื่อ-นามสกุล">
+    </div>
+    <div id="studentList"></div>
+    <div class="summary-line" id="summaryLine"></div>
+    <button type="button" class="btn btn-primary btn-full" id="submitBtn" style="margin-top:1rem;" onclick="submitReport()">
+      ✓ ส่งรายงาน
+    </button>
+  </div>
+</div>
+
+<div class="footer">
+  <p>โรงเรียนเมืองแกพิทยาสรรค์ — ระบบเช็คชื่อรายวัน</p>
+</div>
+
+<script>
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz7nXP_osu8adEuJBIENyUi4L2LiHv6jr0mAchLoe-awZfhVtTIyJs4kpB5EBu5o24/exec';
+
+let currentStudents = []; // [{no, name, gender}]
+const statusMap = {}; // name -> 'normal' | 'absent' | 'personal' | 'sick' | 'activity'
+
+async function init() {
+  try {
+    const res  = await fetch(`${SCRIPT_URL}?action=rooms`);
+    const json = await res.json();
+    const sel = document.getElementById('room');
+    if (json.status === 'ok' && json.rooms.length) {
+      sel.innerHTML = '<option value="">— เลือกห้อง —</option>' +
+        json.rooms.map(r => `<option value="${r}">${r}</option>`).join('');
+    } else {
+      sel.innerHTML = '<option value="">— ยังไม่มีห้อง (ใส่ใน Sheet "ห้องเรียน") —</option>';
+    }
+  } catch {
+    showAlert('ไม่สามารถโหลดรายชื่อห้องได้ ตรวจสอบการเชื่อมต่อ', 'error');
+  }
+}
+init();
+
+async function loadRoster() {
+  const room = document.getElementById('room').value;
+  if (!room) {
+    showAlert('กรุณาเลือกห้องก่อน', 'error');
+    return;
+  }
+
+  try {
+    const res  = await fetch(`${SCRIPT_URL}?action=students&room=${encodeURIComponent(room)}`);
+    const json = await res.json();
+    if (json.status !== 'ok') {
+      showAlert(json.message || 'เกิดข้อผิดพลาด', 'error');
+      return;
+    }
+    if (!json.students.length) {
+      showAlert('ยังไม่มีรายชื่อนักเรียนของห้องนี้ใน Sheet "นักเรียน"', 'error');
+      return;
+    }
+    currentStudents = json.students;
+    currentStudents.forEach(s => statusMap[s.name] = 'normal');
+    renderRoster();
+    document.getElementById('rosterBox').style.display = 'block';
+    window.scrollTo({ top: document.getElementById('rosterBox').offsetTop - 20, behavior: 'smooth' });
+    checkAlreadySubmitted(room);
+  } catch {
+    showAlert('ไม่สามารถเชื่อมต่อได้ กรุณาลองใหม่', 'error');
+  }
+}
+
+async function checkAlreadySubmitted(room) {
+  try {
+    const res  = await fetch(`${SCRIPT_URL}?action=mystatus&room=${encodeURIComponent(room)}`);
+    const json = await res.json();
+    if (json.status === 'ok' && json.submitted) {
+      const p = json.present, a = json.absent, pl = json.personalLeave, sl = json.sickLeave, ac = json.activity;
+      showAlert(`⚠️ ห้อง ${room} ส่งรายงานวันนี้ไปแล้วเมื่อเวลา ${json.time} น. (มา ${p.total} · ขาด ${a.total} · ลากิจ ${pl.total} · ลาป่วย ${sl.total} · ไปกิจกรรม ${ac.total}) — ถ้ากดส่งอีกครั้ง รายงานเดิมจะถูกแทนที่ด้วยอันใหม่`, 'error');
+    }
+  } catch { /* ไม่ต้องแจ้งเตือนถ้าเช็คไม่สำเร็จ ไม่ใช่ขั้นตอนที่จำเป็นต้องบล็อกการทำงาน */ }
+}
+
+function renderRoster() {
+  const box = document.getElementById('studentList');
+  box.innerHTML = currentStudents.map(s => `
+    <div class="student-row">
+      <span class="name">${s.no}. ${s.name}${s.gender ? `<span class="gender-tag">(${s.gender})</span>` : ''}</span>
+      <div class="status-mini-grid" data-name="${s.name}">
+        ${btn(s.name, 'normal',   '✓ ปกติ')}
+        ${btn(s.name, 'absent',   '✗ ขาด')}
+        ${btn(s.name, 'personal', '📝 ลากิจ')}
+        ${btn(s.name, 'sick',     '🤒 ลาป่วย')}
+        ${btn(s.name, 'activity', '🏃 กิจกรรม')}
+      </div>
+    </div>
+  `).join('');
+  refreshButtons();
+  updateSummary();
+}
+
+function btn(name, key, label) {
+  return `<button type="button" class="status-mini-btn" onclick="setStatus('${name.replace(/'/g,"\\'")}','${key}')">${label}</button>`;
+}
+
+function setStatus(name, key) {
+  statusMap[name] = key;
+  refreshButtons();
+  updateSummary();
+}
+
+function refreshButtons() {
+  document.querySelectorAll('.status-mini-grid').forEach(grid => {
+    const name = grid.dataset.name;
+    const buttons = grid.querySelectorAll('.status-mini-btn');
+    const keys = ['normal', 'absent', 'personal', 'sick', 'activity'];
+    buttons.forEach((b, i) => {
+      b.classList.remove('sel-normal', 'sel-absent', 'sel-personal', 'sel-sick', 'sel-activity');
+      if (keys[i] === statusMap[name]) b.classList.add('sel-' + keys[i]);
+    });
+  });
+}
+
+function updateSummary() {
+  const counts = { normal: 0, absent: 0, personal: 0, sick: 0, activity: 0 };
+  Object.values(statusMap).forEach(v => counts[v]++);
+  document.getElementById('summaryLine').textContent =
+    `มา ${counts.normal} · ขาด ${counts.absent} · ลากิจ ${counts.personal} · ลาป่วย ${counts.sick} · ไปกิจกรรม ${counts.activity} (รวม ${currentStudents.length} คน)`;
+}
+
+async function submitReport() {
+  const room = document.getElementById('room').value;
+
+  const absentNames = [], personalLeaveNames = [], sickLeaveNames = [], activityNames = [];
+  Object.entries(statusMap).forEach(([name, v]) => {
+    if (v === 'absent')   absentNames.push(name);
+    if (v === 'personal') personalLeaveNames.push(name);
+    if (v === 'sick')     sickLeaveNames.push(name);
+    if (v === 'activity') activityNames.push(name);
+  });
+
+  const btn = document.getElementById('submitBtn');
+  btn.disabled = true;
+  btn.textContent = 'กำลังส่ง...';
+
+  const reporterName = document.getElementById('reporterName').value.trim();
+
+  const payload = {
+    action: 'submit', room, reporterName,
+    absentNames, personalLeaveNames, sickLeaveNames, activityNames,
+    timestamp: new Date().toLocaleString('th-TH'),
+  };
+
+  try {
+    const res  = await fetch(SCRIPT_URL, { method: 'POST', body: JSON.stringify(payload) });
+    const json = await res.json();
+    if (json.status === 'ok') {
+      const p = json.present, a = json.absent, pl = json.personalLeave, sl = json.sickLeave, ac = json.activity;
+      showAlert(`✓ ส่งรายงานสำเร็จ! ห้อง ${room} — มา ${p.total} · ขาด ${a.total} · ลากิจ ${pl.total} · ลาป่วย ${sl.total} · ไปกิจกรรม ${ac.total}`, 'success');
+    } else {
+      showAlert(json.message || 'เกิดข้อผิดพลาด', 'error');
+    }
+  } catch {
+    showAlert('ไม่สามารถเชื่อมต่อได้ กรุณาลองใหม่', 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '✓ ส่งรายงาน';
+  }
+}
+
+function showAlert(msg, type) {
+  const el = document.getElementById('alertBox');
+  el.className = `alert alert-${type}`;
+  el.textContent = msg;
+  el.style.display = 'block';
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  if (type === 'success') setTimeout(() => el.style.display = 'none', 6000);
+}
+</script>
+
+</body>
+</html>

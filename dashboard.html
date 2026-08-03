@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>แดชบอร์ดเช็คชื่อรายวัน — เมืองแกพิทยาสรรค์</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/css/style.css">
+  <style>
+    .totals-grid {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(110px,1fr));
+      gap: 0.75rem; margin: 1rem 0 1.5rem;
+    }
+    .total-tile {
+      background: #fff; border: 1px solid #eee; border-radius: 10px;
+      padding: 0.9rem; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    }
+    .total-tile .num { font-size: 1.6rem; font-weight: 700; }
+    .total-tile .lbl { font-size: 0.8rem; color: var(--muted,#666); }
+
+    table.att-table { width: 100%; border-collapse: collapse; background: #fff; }
+    table.att-table th, table.att-table td {
+      padding: 0.45rem 0.5rem; border: 1px solid #eee; text-align: center; font-size: 0.82rem; white-space: nowrap;
+    }
+    table.att-table td:first-child, table.att-table th:first-child { text-align: left; }
+    table.att-table th { background: #fafafa; font-weight: 700; }
+    tr.room-row { cursor: pointer; }
+    tr.room-row:hover { background: #f7f9fc; }
+    tr.detail-row td { background: #fbfbfb; font-size: 0.85rem; color: #444; text-align: left; white-space: normal; }
+    tr.group-row td { background: #eef4fb; font-weight: 700; }
+    tr.grand-row td { background: #1f3a5f; color: #fff; font-weight: 700; }
+    .status-yes { color: var(--green,#27ae60); font-weight: 600; }
+    .status-no  { color: var(--accent,#e74c3c); font-weight: 600; }
+    .table-wrap { overflow-x: auto; }
+  </style>
+</head>
+<body>
+
+<nav class="navbar">
+  <a href="index.html" class="navbar-brand">📋 เช็คชื่อรายวัน MKP</a>
+  <ul class="navbar-nav">
+    <li><a href="index.html">หน้าหลัก</a></li>
+    <li><a href="report.html">รายงานเช็คชื่อ</a></li>
+  </ul>
+</nav>
+
+<div class="hero" style="padding:2rem;">
+  <h1>📊 แดชบอร์ดเช็คชื่อรายวัน</h1>
+  <p>ภาพรวมทั้งโรงเรียน — สำหรับครูทุกท่าน (ตรงตามแบบรายงานสถิติการมาเรียนประจำวัน)</p>
+</div>
+
+<div class="container">
+  <div class="breadcrumb">
+    <a href="index.html">หน้าหลัก</a><span>›</span>
+    แดชบอร์ดเช็คชื่อ
+  </div>
+
+  <div id="content">
+    <div class="form-group" style="max-width:420px; display:flex; gap:0.75rem; align-items:flex-end; flex-wrap:wrap;">
+      <div>
+        <label for="datePicker">วันที่</label>
+        <input type="date" id="datePicker" class="form-control" onchange="loadData(this.value)">
+      </div>
+      <button type="button" class="btn btn-primary" onclick="loadData(document.getElementById('datePicker').value)">🔄 รีเฟรช</button>
+    </div>
+
+    <div class="totals-grid" id="totalsGrid"></div>
+    <p class="summary-line" id="totalsNote" style="color:var(--muted,#666); font-size:0.85rem; margin-top:-1rem; margin-bottom:1rem;"></p>
+
+    <div class="table-wrap">
+      <table class="att-table">
+        <thead>
+          <tr>
+            <th rowspan="2">ห้อง</th>
+            <th colspan="3">จำนวนเต็ม</th>
+            <th colspan="3">มา</th>
+            <th colspan="3">ขาด</th>
+            <th colspan="3">ลากิจ</th>
+            <th colspan="3">ลาป่วย</th>
+            <th colspan="3">ไปกิจกรรม</th>
+            <th rowspan="2">เวลาที่ส่ง</th>
+          </tr>
+          <tr>
+            <th>ช</th><th>ญ</th><th>รวม</th>
+            <th>ช</th><th>ญ</th><th>รวม</th>
+            <th>ช</th><th>ญ</th><th>รวม</th>
+            <th>ช</th><th>ญ</th><th>รวม</th>
+            <th>ช</th><th>ญ</th><th>รวม</th>
+            <th>ช</th><th>ญ</th><th>รวม</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+
+    <div class="form-card" style="margin-top:1.5rem;">
+      <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.5rem;">
+        <h3 style="margin:0;">📋 รายชื่อทั้งหมดที่ขาด/ลา/ไปกิจกรรม</h3>
+        <button type="button" class="btn btn-primary" onclick="copyAbsentList()">📋 คัดลอกรายชื่อ</button>
+      </div>
+      <p class="summary-line" id="absentListNote" style="color:var(--muted,#666); font-size:0.85rem; margin-top:0.3rem;"></p>
+      <textarea id="absentListText" readonly rows="10"
+        style="width:100%; margin-top:0.5rem; font-family:inherit; font-size:0.9rem; padding:0.6rem; border:1px solid #ddd; border-radius:8px; resize:vertical;"></textarea>
+    </div>
+  </div>
+</div>
+
+<div class="footer">
+  <p>โรงเรียนเมืองแกพิทยาสรรค์ — ระบบเช็คชื่อรายวัน</p>
+</div>
+
+<script>
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbz7nXP_osu8adEuJBIENyUi4L2LiHv6jr0mAchLoe-awZfhVtTIyJs4kpB5EBu5o24/exec';
+const COLS = 20; // 1 (ห้อง) + 3 (จำนวนเต็ม) + 5*3 (หมวด) + 1 (เวลาที่ส่ง)
+
+function init() {
+  const today = new Date().toLocaleDateString('sv-SE'); // yyyy-MM-dd ตามเวลาเครื่องผู้ใช้
+  document.getElementById('datePicker').value = today;
+  loadData(today);
+}
+init();
+
+async function loadData(dateStr) {
+  const tbody = document.getElementById('tableBody');
+  tbody.innerHTML = `<tr><td colspan="${COLS}">กำลังโหลด...</td></tr>`;
+  try {
+    const res  = await fetch(`${SCRIPT_URL}?action=bydate&date=${encodeURIComponent(dateStr)}`);
+    const json = await res.json();
+    if (json.status !== 'ok') {
+      tbody.innerHTML = `<tr><td colspan="${COLS}">${json.message || 'เกิดข้อผิดพลาด'}</td></tr>`;
+      return;
+    }
+    renderTotals(json.totals);
+    renderTable(json.rooms);
+    renderAbsentList(json.rooms, dateStr);
+  } catch {
+    tbody.innerHTML = `<tr><td colspan="${COLS}">ไม่สามารถเชื่อมต่อได้</td></tr>`;
+  }
+}
+
+function renderTotals(t) {
+  const incomplete = t.submittedCount < t.totalRooms;
+  document.getElementById('totalsGrid').innerHTML = `
+    <div class="total-tile"><div class="num" style="${incomplete ? 'color:var(--accent,#e74c3c)' : ''}">${t.submittedCount}/${t.totalRooms}</div><div class="lbl">ห้องที่ส่งแล้ว</div></div>
+    <div class="total-tile"><div class="num">${t.present.total}</div><div class="lbl">มา${incomplete ? '*' : ''}</div></div>
+    <div class="total-tile"><div class="num">${t.absent.total}</div><div class="lbl">ขาด${incomplete ? '*' : ''}</div></div>
+    <div class="total-tile"><div class="num">${t.personalLeave.total}</div><div class="lbl">ลากิจ${incomplete ? '*' : ''}</div></div>
+    <div class="total-tile"><div class="num">${t.sickLeave.total}</div><div class="lbl">ลาป่วย${incomplete ? '*' : ''}</div></div>
+    <div class="total-tile"><div class="num">${t.activity.total}</div><div class="lbl">ไปกิจกรรม${incomplete ? '*' : ''}</div></div>
+  `;
+  document.getElementById('totalsNote').textContent = incomplete
+    ? '* ยอดรวมนับเฉพาะห้องที่ส่งรายงานแล้วเท่านั้น ยังมีบางห้องไม่ส่ง'
+    : 'ยอดรวมนี้ครบทุกห้องแล้ว';
+}
+
+function zeroCat() { return { male: 0, female: 0, total: 0 }; }
+function addCat(target, src) { target.male += src.male; target.female += src.female; target.total += src.total; }
+
+// รวมข้อมูลของกลุ่มห้อง (matchFn ตรวจจากชื่อห้อง) — ตัวเลขหมวดต่างๆ นับเฉพาะห้องที่ส่งแล้วในกลุ่มนั้น
+function sumGroup(rooms, matchFn) {
+  const group = rooms.filter(r => matchFn(r.room));
+  const roster = zeroCat(), present = zeroCat(), absent = zeroCat(), personalLeave = zeroCat(), sickLeave = zeroCat(), activity = zeroCat();
+  let submittedCount = 0;
+  group.forEach(r => {
+    addCat(roster, r.roster);
+    if (r.submitted) {
+      submittedCount++;
+      addCat(present, r.present); addCat(absent, r.absent);
+      addCat(personalLeave, r.personalLeave); addCat(sickLeave, r.sickLeave); addCat(activity, r.activity);
+    }
+  });
+  return { roster, present, absent, personalLeave, sickLeave, activity, submittedCount, count: group.length };
+}
+
+function catCells(cat, submitted) {
+  if (!submitted) return '<td>-</td><td>-</td><td>-</td>';
+  return `<td>${cat.male}</td><td>${cat.female}</td><td>${cat.total}</td>`;
+}
+
+function renderRoomRow(r, i) {
+  const hasNames = (r.absent && r.absent.names) || (r.personalLeave && r.personalLeave.names) ||
+                    (r.sickLeave && r.sickLeave.names) || (r.activity && r.activity.names);
+  const rows = [`
+    <tr class="room-row" onclick="toggleDetail(${i})">
+      <td>${r.room} ${r.submitted && hasNames ? '🔽' : ''}</td>
+      <td>${r.roster.male}</td><td>${r.roster.female}</td><td>${r.roster.total}</td>
+      ${catCells(r.present, r.submitted)}
+      ${catCells(r.absent, r.submitted)}
+      ${catCells(r.personalLeave, r.submitted)}
+      ${catCells(r.sickLeave, r.submitted)}
+      ${catCells(r.activity, r.submitted)}
+      <td>${r.submitted ? r.time : '<span class="status-no">ยังไม่ส่ง</span>'}</td>
+    </tr>
+  `];
+  if (r.submitted) {
+    rows.push(`
+      <tr class="detail-row" id="detail-${i}" style="display:none;">
+        <td colspan="${COLS}">
+          ${r.absent.names ? `<b>ขาด:</b> ${r.absent.names}<br>` : ''}
+          ${r.personalLeave.names ? `<b>ลากิจ:</b> ${r.personalLeave.names}<br>` : ''}
+          ${r.sickLeave.names ? `<b>ลาป่วย:</b> ${r.sickLeave.names}<br>` : ''}
+          ${r.activity.names ? `<b>ไปกิจกรรม:</b> ${r.activity.names}` : ''}
+          ${!hasNames ? 'มาเรียนครบทุกคน' : ''}
+        </td>
+      </tr>
+    `);
+  }
+  return rows.join('');
+}
+
+function renderGroupRow(label, g) {
+  const submitted = g.submittedCount > 0;
+  return `
+    <tr class="group-row">
+      <td>${label}</td>
+      <td>${g.roster.male}</td><td>${g.roster.female}</td><td>${g.roster.total}</td>
+      ${catCells(g.present, submitted)}
+      ${catCells(g.absent, submitted)}
+      ${catCells(g.personalLeave, submitted)}
+      ${catCells(g.sickLeave, submitted)}
+      ${catCells(g.activity, submitted)}
+      <td>${g.submittedCount}/${g.count} ห้อง</td>
+    </tr>
+  `;
+}
+
+function renderTable(rooms) {
+  const tbody = document.getElementById('tableBody');
+  if (!rooms.length) {
+    tbody.innerHTML = `<tr><td colspan="${COLS}">ยังไม่มีห้องในระบบ (ใส่ใน Sheet "ห้องเรียน")</td></tr>`;
+    return;
+  }
+
+  const isJunior = room => /^ม\.[1-3]\b/.test(room) || room.startsWith('ม.1') || room.startsWith('ม.2') || room.startsWith('ม.3');
+  const isSenior = room => room.startsWith('ม.4') || room.startsWith('ม.5') || room.startsWith('ม.6');
+
+  let html = rooms.map((r, i) => renderRoomRow(r, i)).join('');
+
+  const juniorGroup = sumGroup(rooms, isJunior);
+  const seniorGroup = sumGroup(rooms, isSenior);
+  const allGroup     = sumGroup(rooms, () => true);
+
+  if (juniorGroup.count) html += renderGroupRow('รวม ม.ต้น', juniorGroup);
+  if (seniorGroup.count) html += renderGroupRow('รวม ม.ปลาย', seniorGroup);
+  html += `
+    <tr class="grand-row">
+      <td>รวมทั้งสิ้น</td>
+      <td>${allGroup.roster.male}</td><td>${allGroup.roster.female}</td><td>${allGroup.roster.total}</td>
+      ${catCells(allGroup.present, allGroup.submittedCount > 0)}
+      ${catCells(allGroup.absent, allGroup.submittedCount > 0)}
+      ${catCells(allGroup.personalLeave, allGroup.submittedCount > 0)}
+      ${catCells(allGroup.sickLeave, allGroup.submittedCount > 0)}
+      ${catCells(allGroup.activity, allGroup.submittedCount > 0)}
+      <td>${allGroup.submittedCount}/${allGroup.count} ห้อง</td>
+    </tr>
+  `;
+
+  tbody.innerHTML = html;
+}
+
+// รวมรายชื่อทั้งหมดที่ขาด/ลากิจ/ลาป่วย/ไปกิจกรรม จากทุกห้องที่ส่งแล้ว เป็น list เดียว
+// เอาไปวางในกล่องข้อความให้คัดลอกไปใช้ต่อได้ง่าย (เช่น รายงาน ผอ. หรือติดตามนักเรียน)
+function thaiDateLabel(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  return d.toLocaleDateString('th-TH', { day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+function renderAbsentList(rooms, dateStr) {
+  const CAT_LABELS = [
+    ['absent', 'ขาด'],
+    ['personalLeave', 'ลากิจ'],
+    ['sickLeave', 'ลาป่วย'],
+    ['activity', 'ไปกิจกรรม'],
+  ];
+  const lines = [];
+  rooms.forEach(r => {
+    if (!r.submitted) return;
+    CAT_LABELS.forEach(([key, label]) => {
+      const namesStr = r[key] && r[key].names;
+      if (!namesStr) return;
+      namesStr.split(',').map(n => n.trim()).filter(Boolean).forEach(name => {
+        lines.push(`${name} — ${r.room} — ${label}`);
+      });
+    });
+  });
+
+  const header = `รายชื่อขาด/ลา/ไปกิจกรรม วันที่ ${thaiDateLabel(dateStr)}`;
+  document.getElementById('absentListText').value = lines.length
+    ? `${header}\n\n${lines.join('\n')}`
+    : `${header}\n\nไม่มีนักเรียนขาด/ลา/ไปกิจกรรมในวันนี้ (จากห้องที่ส่งรายงานแล้ว)`;
+  document.getElementById('absentListNote').textContent = lines.length
+    ? `รวม ${lines.length} คน (เฉพาะห้องที่ส่งรายงานแล้ว)`
+    : '';
+}
+
+async function copyAbsentList() {
+  const textarea = document.getElementById('absentListText');
+  try {
+    await navigator.clipboard.writeText(textarea.value);
+    showCopyFeedback('คัดลอกแล้ว ✓');
+  } catch {
+    // เบราว์เซอร์บางตัว/หน้าที่เปิดจากไฟล์ในเครื่อง อาจใช้ Clipboard API ไม่ได้ — สำรองด้วยการเลือกข้อความให้กด Ctrl+C เอง
+    textarea.select();
+    try {
+      document.execCommand('copy');
+      showCopyFeedback('คัดลอกแล้ว ✓');
+    } catch {
+      showCopyFeedback('คัดลอกอัตโนมัติไม่ได้ กรุณากด Ctrl+C เอง (เลือกข้อความให้แล้ว)');
+    }
+  }
+}
+
+function showCopyFeedback(msg) {
+  const note = document.getElementById('absentListNote');
+  const original = note.textContent;
+  note.textContent = msg;
+  setTimeout(() => { note.textContent = original; }, 2500);
+}
+
+function toggleDetail(i) {
+  const el = document.getElementById(`detail-${i}`);
+  if (el) el.style.display = el.style.display === 'none' ? 'table-row' : 'none';
+}
+</script>
+
+</body>
+</html>

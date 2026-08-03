@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ระบบเช็คชื่อรายวัน — โรงเรียนเมืองแกพิทยาสรรค์</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/css/style.css">
+  <style>
+    .link-grid {
+      display: grid; gap: 1rem; grid-template-columns: repeat(auto-fit, minmax(240px,1fr));
+      margin-top: 1.5rem;
+    }
+    .link-card {
+      display: block; background: #fff; border: 1px solid #eee; border-radius: 12px;
+      padding: 1.5rem; text-decoration: none; color: inherit;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.05); transition: box-shadow 0.15s;
+    }
+    .link-card:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.1); }
+    .link-card .emoji { font-size: 2rem; }
+    .link-card h2 { margin: 0.5rem 0 0.25rem; font-size: 1.2rem; }
+    .link-card p { margin: 0; color: var(--muted,#666); font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+
+<nav class="navbar">
+  <a href="index.html" class="navbar-brand">📋 เช็คชื่อรายวัน MKP</a>
+</nav>
+
+<div class="hero" style="padding:2rem;">
+  <h1>📋 ระบบเช็คชื่อรายวันตอนเช้า</h1>
+  <p>โรงเรียนเมืองแกพิทยาสรรค์ — ทุกวันที่มีการเรียน เวลา 08:40</p>
+</div>
+
+<div class="container">
+  <div class="link-grid">
+    <a href="report.html" class="link-card">
+      <div class="emoji">📋</div>
+      <h2>รายงานเช็คชื่อ</h2>
+      <p>สำหรับหัวหน้าห้อง — เลือกห้องแล้วรายงานคนขาด/ลา/มาสาย</p>
+    </a>
+    <a href="dashboard.html" class="link-card">
+      <div class="emoji">📊</div>
+      <h2>แดชบอร์ดสรุปยอด</h2>
+      <p>สำหรับครูทุกท่าน — ดูภาพรวมทั้งโรงเรียนวันนี้และย้อนหลัง</p>
+    </a>
+  </div>
+</div>
+
+<div class="footer">
+  <p>โรงเรียนเมืองแกพิทยาสรรค์ — ระบบเช็คชื่อรายวัน</p>
+</div>
+
+</body>
+</html>
