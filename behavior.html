@@ -109,8 +109,17 @@
         </div>
 
         <div class="form-group" id="reasonMeritGroup" style="display:none;">
-          <label for="meritReason">ความดีที่พบเห็น</label>
-          <input type="text" id="meritReason" class="form-control" placeholder="เช่น ช่วยเก็บขยะ, ได้เกียรติบัตรแข่งวิชาการ">
+          <label for="meritReasonSelect">ความดีที่พบเห็น</label>
+          <!-- เดิมเป็นช่องกรอกข้อความอิสระล้วนๆ — เปลี่ยนเป็น dropdown จากเกณฑ์ Sheet "เกณฑ์คะแนนความประพฤติ"
+               (type='เพิ่ม') แบบเดียวกับฝั่งหักคะแนน แก้ไขได้ที่ settings.html โดยไม่ต้องแก้โค้ด 2569 -->
+          <select id="meritReasonSelect" class="form-control" onchange="onReasonChange()">
+            <option value="">— กำลังโหลดเกณฑ์คะแนน... —</option>
+          </select>
+        </div>
+
+        <div class="form-group" id="meritOtherGroup" style="display:none;">
+          <label for="meritOtherReason">ระบุความดีที่พบเห็น</label>
+          <input type="text" id="meritOtherReason" class="form-control" placeholder="เช่น ช่วยเก็บขยะ, ได้เกียรติบัตรแข่งวิชาการ">
         </div>
 
         <div class="form-group" id="customPointsGroup" style="display:none;">
@@ -118,9 +127,9 @@
           <input type="number" id="customPoints" class="form-control" min="1" placeholder="ใส่ตัวเลข">
         </div>
 
-        <div class="form-group" id="meritPointsGroup" style="display:none;">
-          <label for="meritPoints">จำนวนคะแนนที่จะเพิ่ม</label>
-          <input type="number" id="meritPoints" class="form-control" min="1" placeholder="ใส่ตัวเลข">
+        <div class="form-group" id="meritCustomPointsGroup" style="display:none;">
+          <label for="meritCustomPoints">จำนวนคะแนน</label>
+          <input type="number" id="meritCustomPoints" class="form-control" min="1" placeholder="ใส่ตัวเลข">
         </div>
 
         <div class="form-group">
@@ -222,23 +231,31 @@ async function initApp() {
   loadCriteria();
 }
 
-// โหลดเกณฑ์หักคะแนนจาก Sheet "เกณฑ์คะแนนความประพฤติ" (แก้ไขได้ที่ settings.html) แทนของ hardcode เดิม
+// โหลดเกณฑ์หัก/เพิ่มคะแนนจาก Sheet "เกณฑ์คะแนนความประพฤติ" (แก้ไขได้ที่ settings.html) แทนของ hardcode เดิม
 // "อื่นๆ" ยังคงเป็นตัวเลือกพิเศษท้ายสุดเสมอ ให้กรอกคะแนนเอง ไม่ได้มาจาก Sheet
 async function loadCriteria() {
-  const sel = document.getElementById('reasonSelect');
+  const sel      = document.getElementById('reasonSelect');
+  const meritSel = document.getElementById('meritReasonSelect');
+  const otherOpt = `<option value="__other__" data-points="">อื่นๆ (ระบุคะแนนเอง)</option>`;
   try {
     const res  = await fetch(`${SCRIPT_URL}?action=settingsData`);
     const json = await res.json();
     if (json.status === 'ok') {
       const deductCriteria = (json.criteria || []).filter(c => c.type === 'หัก');
+      const meritCriteria  = (json.criteria || []).filter(c => c.type === 'เพิ่ม');
       sel.innerHTML = deductCriteria.map(c =>
         `<option value="${c.reason}" data-points="${c.points}">${c.reason} (หัก ${c.points})</option>`
-      ).join('') + `<option value="__other__" data-points="">อื่นๆ (ระบุคะแนนเอง)</option>`;
+      ).join('') + otherOpt;
+      meritSel.innerHTML = meritCriteria.map(c =>
+        `<option value="${c.reason}" data-points="${c.points}">${c.reason} (เพิ่ม ${c.points})</option>`
+      ).join('') + otherOpt;
     } else {
-      sel.innerHTML = `<option value="__other__" data-points="">อื่นๆ (ระบุคะแนนเอง)</option>`;
+      sel.innerHTML = otherOpt;
+      meritSel.innerHTML = otherOpt;
     }
   } catch {
-    sel.innerHTML = `<option value="">— โหลดเกณฑ์คะแนนไม่สำเร็จ —</option><option value="__other__" data-points="">อื่นๆ (ระบุคะแนนเอง)</option>`;
+    sel.innerHTML = `<option value="">— โหลดเกณฑ์คะแนนไม่สำเร็จ —</option>` + otherOpt;
+    meritSel.innerHTML = `<option value="">— โหลดเกณฑ์คะแนนไม่สำเร็จ —</option>` + otherOpt;
   }
 }
 
@@ -249,14 +266,21 @@ function setType(type) {
   document.getElementById('btnMerit').classList.toggle('active-merit', type === 'เพิ่ม');
   document.getElementById('reasonDeductGroup').style.display = type === 'หัก' ? 'block' : 'none';
   document.getElementById('reasonMeritGroup').style.display  = type === 'เพิ่ม' ? 'block' : 'none';
-  document.getElementById('meritPointsGroup').style.display  = type === 'เพิ่ม' ? 'block' : 'none';
   onReasonChange();
 }
 
 function onReasonChange() {
-  const sel = document.getElementById('reasonSelect');
-  const isOther = currentType === 'หัก' && sel.value === '__other__';
-  document.getElementById('customPointsGroup').style.display = isOther ? 'block' : 'none';
+  if (currentType === 'หัก') {
+    const isOther = document.getElementById('reasonSelect').value === '__other__';
+    document.getElementById('customPointsGroup').style.display = isOther ? 'block' : 'none';
+    document.getElementById('meritOtherGroup').style.display = 'none';
+    document.getElementById('meritCustomPointsGroup').style.display = 'none';
+  } else {
+    const isOther = document.getElementById('meritReasonSelect').value === '__other__';
+    document.getElementById('meritOtherGroup').style.display = isOther ? 'block' : 'none';
+    document.getElementById('meritCustomPointsGroup').style.display = isOther ? 'block' : 'none';
+    document.getElementById('customPointsGroup').style.display = 'none';
+  }
 }
 
 // ---------------- โหลดรายชื่อนักเรียนของห้อง (ใช้ endpoint students เดิม) ----------------
@@ -290,6 +314,7 @@ async function submitBehavior() {
   let reason, points;
   if (currentType === 'หัก') {
     const sel = document.getElementById('reasonSelect');
+    if (!sel.value) { showAlert('กรุณาเลือกเหตุผล', 'error'); return; }
     if (sel.value === '__other__') {
       reason = 'อื่นๆ';
       points = Number(document.getElementById('customPoints').value);
@@ -299,10 +324,17 @@ async function submitBehavior() {
       points = Number(sel.selectedOptions[0].dataset.points);
     }
   } else {
-    reason = document.getElementById('meritReason').value.trim();
-    points = Number(document.getElementById('meritPoints').value);
-    if (!reason) { showAlert('กรุณาระบุความดีที่พบเห็น', 'error'); return; }
-    if (!points || points <= 0) { showAlert('กรุณาใส่จำนวนคะแนนความดี', 'error'); return; }
+    const sel = document.getElementById('meritReasonSelect');
+    if (!sel.value) { showAlert('กรุณาเลือกความดีที่พบเห็น', 'error'); return; }
+    if (sel.value === '__other__') {
+      reason = document.getElementById('meritOtherReason').value.trim();
+      points = Number(document.getElementById('meritCustomPoints').value);
+      if (!reason) { showAlert('กรุณาระบุความดีที่พบเห็น (อื่นๆ)', 'error'); return; }
+      if (!points || points <= 0) { showAlert('กรุณาใส่จำนวนคะแนนความดี (อื่นๆ)', 'error'); return; }
+    } else {
+      reason = sel.value;
+      points = Number(sel.selectedOptions[0].dataset.points);
+    }
   }
   if (!reporterName) { showAlert('กรุณาระบุผู้รายงาน', 'error'); return; }
 
@@ -320,8 +352,8 @@ async function submitBehavior() {
       showAlert(`✓ บันทึกสำเร็จ! ${studentName} — ${currentType} ${points} คะแนน (${reason})`, 'success');
       document.getElementById('reporterName').value = reporterName; // เก็บชื่อผู้รายงานไว้ให้กรอกต่อเนื่องได้
       document.getElementById('customPoints').value = '';
-      document.getElementById('meritReason').value = '';
-      document.getElementById('meritPoints').value = '';
+      document.getElementById('meritOtherReason').value = '';
+      document.getElementById('meritCustomPoints').value = '';
     } else {
       showAlert(json.message || 'เกิดข้อผิดพลาด', 'error');
     }
