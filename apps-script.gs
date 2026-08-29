@@ -105,6 +105,16 @@ function setupSheets() {
     if (s.getLastRow() === 0) s.appendRow(headers);
   });
 
+  // ⚠️ บังคับคอลัมน์ "ภาคเรียน" (คะแนนความประพฤติ) และ "ค่า" (ตั้งค่ากิจการนักเรียน) ทั้งคอลัมน์ให้เป็น
+  // ข้อความล้วนตั้งแต่ตอนนี้ — ค่าอย่าง "1/2569" หรือ "2/2569" หน้าตาคล้ายวันที่ (เดือน/ปี) Google Sheets
+  // จะแปลงเป็น Date ให้เองอัตโนมัติถ้าไม่บังคับฟอร์แมตไว้ก่อน (เจอบั๊กจริง พ.ค. 2569 — ทำให้เทียบภาคเรียน
+  // ไม่ตรงกัน ประวัติคะแนนหายไปทั้งระบบกว่าจะรู้ตัว) ตั้งเป็นทั้งคอลัมน์ (ไม่ใช่แค่แถวที่มีข้อมูลอยู่ตอนนี้)
+  // เพื่อให้ครอบคลุมแถวใหม่ที่จะเพิ่มในอนาคตด้วย รันซ้ำได้ปลอดภัยเหมือนส่วนอื่นของฟังก์ชันนี้
+  const behSheetForFormat = ss.getSheetByName('คะแนนความประพฤติ');
+  if (behSheetForFormat) behSheetForFormat.getRange('C:C').setNumberFormat('@');
+  const cfgSheetForFormat = ss.getSheetByName('ตั้งค่ากิจการนักเรียน');
+  if (cfgSheetForFormat) cfgSheetForFormat.getRange('B:B').setNumberFormat('@');
+
   // ตั้งค่าเริ่มต้นภาคเรียนปัจจุบัน (ถ้ายังไม่มีใครกรอก) — ครูกิจการนักเรียนแก้ค่านี้เองตอนขึ้นภาคเรียนใหม่
   // คะแนนความประพฤติจะคำนวณกรองด้วยค่านี้เท่านั้น แถวเก่าภาคเรียนก่อนหน้ายังอยู่ในชีทเป็นประวัติ ไม่ลบทิ้ง
   const cfgSheet = ss.getSheetByName('ตั้งค่ากิจการนักเรียน');
@@ -876,14 +886,26 @@ function getSettingValue(key) {
   return '';
 }
 
+// ⚠️ ต้อง setNumberFormat('@') ก่อน setValue() เสมอ — ค่าเช่น "1/2569" หรือ "2/2569" หน้าตาคล้ายวันที่
+// (เดือน/ปี) Google Sheets จะแปลงเป็นเซลล์ชนิด Date ให้เองอัตโนมัติเงียบๆ ถ้าไม่บังคับเป็นข้อความก่อน
+// (เจอบั๊กจริงพฤษภาคม 2569 — ค่าภาคเรียนถูกแปลงเป็น Date ทำให้หน้าดูสรุปคะแนนเทียบภาคเรียนไม่ตรงกัน
+// จนประวัติคะแนนไม่ขึ้นเลยทั้งระบบ กว่าจะรู้ตัว)
 function setSettingValue(key, value) {
   const ss    = SpreadsheetApp.openById(SPREADSHEET_ID);
   const sheet = ss.getSheetByName('ตั้งค่ากิจการนักเรียน');
   const rows  = sheet.getDataRange().getValues();
   for (let i = 1; i < rows.length; i++) {
-    if (String(rows[i][0]).trim() === key) { sheet.getRange(i + 1, 2).setValue(value); return; }
+    if (String(rows[i][0]).trim() === key) {
+      const cell = sheet.getRange(i + 1, 2);
+      cell.setNumberFormat('@');
+      cell.setValue(value);
+      return;
+    }
   }
-  sheet.appendRow([key, value]); // แถวนี้ยังไม่เคยมี (เช่น ระบบเก่าก่อนอัปเดต) สร้างใหม่ให้เอง
+  // แถวนี้ยังไม่เคยมี (เช่น ระบบเก่าก่อนอัปเดต) สร้างใหม่ให้เอง — ตั้ง format ข้อความก่อนใส่ค่าเช่นกัน
+  const newRow = sheet.getLastRow() + 1;
+  sheet.getRange(newRow, 2).setNumberFormat('@');
+  sheet.appendRow([key, value]);
 }
 
 // PIN 3 ระดับ ผูกกับ key ใน Sheet "ตั้งค่ากิจการนักเรียน"
