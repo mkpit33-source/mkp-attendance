@@ -196,6 +196,7 @@ function doPost(e) {
     if (data.action === 'submit')         return handleSubmit(data);
     if (data.action === 'submitEvening')  return handleSubmitEvening(data);
     if (data.action === 'submitBehavior') return handleSubmitBehavior(data);
+    if (data.action === 'cancelAutoDeduction') return handleCancelAutoDeduction(data);
     // ---- งานกิจการนักเรียน: ตั้งค่าเบื้องหลัง ----
     if (data.action === 'verifyPin')      return handleVerifyPin(data);
     if (data.action === 'updatePin')      return handleUpdatePin(data);
@@ -308,6 +309,9 @@ function handleSubmit(data) {
   } else {
     logSheet.appendRow(rowValues);
   }
+
+  // หักคะแนนความประพฤติอัตโนมัติจากรายชื่อขาด (เพิ่ม 2569) — ดูรายละเอียดที่ reconcileAbsenceDeduction()
+  reconcileAbsenceDeduction(dateStr, room);
 
   // report.html (ไม่ได้แก้ไฟล์นี้) อ่าน .total จากทุกฟิลด์ที่นี่ — คงรูปแบบ object ไว้แม้ไม่มีเพศแล้ว
   return respond({
@@ -603,6 +607,9 @@ function handleSubmitEvening(data) {
   } else {
     logSheet.appendRow(rowValues);
   }
+
+  // หักคะแนนความประพฤติอัตโนมัติจากรายชื่อขาด (เพิ่ม 2569) — ดูรายละเอียดที่ reconcileAbsenceDeduction()
+  reconcileAbsenceDeduction(dateStr, room);
 
   return respond({
     status: 'ok',
@@ -1092,6 +1099,28 @@ function handleBehaviorSummary(params) {
   const scores = {}, history = {};
   roster.forEach(name => { scores[name] = 100; history[name] = []; });
 
+  // เตรียมสถานะสุทธิของการหักอัตโนมัติต่อ (ชื่อ, วันที่) — ห้องอาจแก้ไขรายงานสลับ ขาด→ไม่ขาด→ขาด
+  // ในวันเดียวกันได้ (ดู reconcileAbsenceDeduction) ทำให้วันเดียวกันมีแถว "ขาดเรียน (อัตโนมัติ)" ได้
+  // มากกว่า 1 แถว ต้องโชว์ปุ่ม "ยกเลิก" เฉพาะแถวล่าสุดที่ยัง active จริง (net=1, ครูยังไม่เคยล็อก) เท่านั้น
+  // แถวเก่าที่ถูกคืนคะแนนไปแล้วไม่ควรมีปุ่มให้กดซ้ำ — ดู reconcileAbsenceDeduction()/handleCancelAutoDeduction() คู่กัน
+  const netAutoByKey = {}, lockedByKey = {}, lastDeductRowByKey = {};
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    if (String(r[2]).trim() !== term || r[3] !== room) continue;
+    const name   = String(r[4]).trim();
+    const date   = cellDateStr(r[0]);
+    const reason = String(r[6]).trim();
+    const key    = name + '|' + date;
+    if (reason === AUTO_ABSENCE_REASON) {
+      netAutoByKey[key] = (netAutoByKey[key] || 0) + 1;
+      lastDeductRowByKey[key] = i;
+    } else if (reason === AUTO_RESTORE_REASON) {
+      netAutoByKey[key] = (netAutoByKey[key] || 0) - 1;
+    } else if (reason === MANUAL_CANCEL_REASON) {
+      lockedByKey[key] = true;
+    }
+  }
+
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i];
     if (String(r[2]).trim() !== term) continue; // เฉพาะภาคเรียนปัจจุบันเท่านั้น
@@ -1101,11 +1130,128 @@ function handleBehaviorSummary(params) {
     const pts   = Number(r[7]) || 0;
     const delta = r[5] === 'เพิ่ม' ? pts : -pts;
     scores[name] += delta;
-    history[name].push({ date: cellDateStr(r[0]), time: cellTimeStr(r[1]), type: r[5], reason: r[6], points: pts, reporter: r[8] });
+    const date = cellDateStr(r[0]);
+    const reason = r[6];
+    const key = name + '|' + date;
+    const isAutoDeduct  = reason === AUTO_ABSENCE_REASON;
+    const isCancellable = isAutoDeduct && i === lastDeductRowByKey[key] && netAutoByKey[key] === 1 && !lockedByKey[key];
+    const isCancelled   = isAutoDeduct && !isCancellable;
+    history[name].push({ date, time: cellTimeStr(r[1]), type: r[5], reason, points: pts, reporter: r[8], isAutoDeduct, isCancelled });
   }
 
   const students = roster.map(name => ({ name, score: scores[name], history: history[name] }));
   return respond({ status: 'ok', term, students });
+}
+
+// ==============================================================
+//  งานกิจการนักเรียน — โมดูล B2: หักคะแนนอัตโนมัติจากขาดเรียน (เพิ่ม 2569)
+//  หลักการ (ยืนยันกับครูแล้ว): ขาด 1 วัน ไม่ว่าจะขาดรอบเช้า/เย็น/ทั้งสองรอบ = หักอัตโนมัติ
+//  ครั้งเดียว 10 คะแนน — ลากิจ/ลาป่วย/ไปกิจกรรม ไม่หัก เพราะมีใบลา/ได้รับอนุญาตแล้ว
+//  หักทันทีตอนห้องส่งรายงาน ไม่ต้องรอครูตรวจก่อน (ตามที่ครูยืนยัน) — มีปุ่ม "ยกเลิก" ในหน้า
+//  ดูสรุปคะแนนไว้แก้กรณีหัวหน้าห้องติ๊กขาดผิดคน
+// ==============================================================
+const AUTO_ABSENCE_REASON  = 'ขาดเรียน (อัตโนมัติ)';
+const AUTO_ABSENCE_POINTS  = 10;
+const AUTO_RESTORE_REASON  = 'คืนคะแนน (แก้ไขรายงานเช็คชื่อ)';   // ห้องแก้ไขรายงานภายหลังจนไม่ขาดแล้ว
+const MANUAL_CANCEL_REASON = 'คืนคะแนน (ยกเลิกโดยครู)';          // ครูกดยกเลิกเองจากหน้าดูสรุปคะแนน
+const AUTO_REPORTER        = 'ระบบอัตโนมัติ';
+
+// เรียกจากท้าย handleSubmit (เช้า) และ handleSubmitEvening (เย็น) ทุกครั้งที่ submit สำเร็จ
+// (รวมถึงตอน resubmit ทับของเดิม) — คำนวณ "ขาดทั้งวัน" ใหม่จากข้อมูลปัจจุบันของทั้งสองรอบ แล้ว sync
+// รายการหักอัตโนมัติของ Sheet "คะแนนความประพฤติ" ให้ตรงกับข้อเท็จจริงล่าสุดเสมอ (idempotent — เรียกซ้ำ
+// กี่ครั้งก็ได้ผลลัพธ์เดิม ไม่หักซ้ำ)
+function reconcileAbsenceDeduction(dateStr, room) {
+  room = normalizeRoom(room);
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+
+  // 1) รวมรายชื่อขาดของวันนี้จากทั้งเช้า+เย็น เป็น set เดียว (union ไม่ซ้ำชื่อ) — คอลัมน์ "รายชื่อขาด"
+  //    อยู่ index 5 เหมือนกันทั้งสองชีท (ดู header ใน setupSheets()) เก็บชื่อคั่นด้วย ", "
+  const absentToday = new Set();
+  ['เช็คชื่อรายวัน', 'เช็คชื่อเย็น'].forEach(sheetName => {
+    const sheet = ss.getSheetByName(sheetName);
+    if (!sheet) return;
+    const rows = sheet.getDataRange().getValues();
+    for (let i = 1; i < rows.length; i++) {
+      const r = rows[i];
+      if (cellDateStr(r[0]) === dateStr && normalizeRoom(r[1]) === room) {
+        String(r[5] || '').split(',').map(s => s.trim()).filter(Boolean).forEach(n => absentToday.add(n));
+      }
+    }
+  });
+
+  // 2) อ่าน ledger คะแนนความประพฤติ เฉพาะแถวของ date+room นี้ที่เกี่ยวกับระบบอัตโนมัติ
+  //    netAuto = ผลรวมสุทธิของการหัก(+1)/คืนอัตโนมัติ(-1) ต่อคน ณ ตอนนี้ (ไม่ใช่ "เคยมีหรือไม่")
+  //    เพื่อให้รองรับกรณีห้องแก้ไขรายงานสลับ ขาด→ไม่ขาด→ขาด ในวันเดียวกันได้ถูกต้อง (หักใหม่ได้ตอน net=0)
+  //    manualLocked = ครูเคยกดปุ่ม "ยกเลิก" ของคนนี้ในวันนี้แล้ว → ล็อกถาวร ห้ามหัก/คืนอัตโนมัติซ้ำอีกเลย
+  //    ไม่ว่าห้องจะแก้ไขรายงานยังไงต่อก็ตาม (ต่างจาก netAuto ที่ toggle ได้เรื่อยๆ)
+  const behSheet = ss.getSheetByName('คะแนนความประพฤติ');
+  const behRows  = behSheet.getDataRange().getValues();
+  const netAuto = {}, manualLocked = {};
+  for (let i = 1; i < behRows.length; i++) {
+    const r = behRows[i];
+    if (cellDateStr(r[0]) !== dateStr) continue;
+    if (normalizeRoom(r[3]) !== room) continue;
+    const name   = String(r[4]).trim();
+    const reason = String(r[6]).trim();
+    if (reason === AUTO_ABSENCE_REASON) netAuto[name] = (netAuto[name] || 0) + 1;
+    else if (reason === AUTO_RESTORE_REASON) netAuto[name] = (netAuto[name] || 0) - 1;
+    else if (reason === MANUAL_CANCEL_REASON) manualLocked[name] = true;
+  }
+
+  const term    = getCurrentTermValue();
+  const timeStr = Utilities.formatDate(new Date(), TZ, 'HH:mm:ss');
+  function appendBehaviorRow(name, type, reason, points) {
+    behSheet.appendRow([dateStr, timeStr, term, room, name, type, reason, points, AUTO_REPORTER]);
+  }
+
+  // 3) หักใหม่: อยู่ในรายชื่อขาดวันนี้ + ยอดสุทธิตอนนี้ = 0 (ไม่ได้ถูกหักค้างอยู่) + ไม่ถูกครูล็อกไว้
+  absentToday.forEach(name => {
+    if (!manualLocked[name] && (netAuto[name] || 0) === 0) {
+      appendBehaviorRow(name, 'หัก', AUTO_ABSENCE_REASON, AUTO_ABSENCE_POINTS);
+    }
+  });
+
+  // 4) คืนคะแนนอัตโนมัติ: ยอดสุทธิตอนนี้ = 1 (กำลังถูกหักค้างอยู่) แต่ไม่อยู่ในรายชื่อขาดวันนี้แล้ว
+  //    (ห้องแก้ไขรายงาน) และไม่ถูกครูล็อกไว้
+  Object.keys(netAuto).forEach(name => {
+    if (!absentToday.has(name) && !manualLocked[name] && netAuto[name] === 1) {
+      appendBehaviorRow(name, 'เพิ่ม', AUTO_RESTORE_REASON, AUTO_ABSENCE_POINTS);
+    }
+  });
+}
+
+// ครูกดปุ่ม "ยกเลิก" จากหน้าดูสรุปคะแนน (behavior.html) เมื่อหัวหน้าห้องติ๊กขาดผิดคน — คืนคะแนนถาวร
+// สำหรับวันนั้น (ตั้ง manualLocked ด้านบน กันไม่ให้ reconcileAbsenceDeduction หัก/คืนอัตโนมัติซ้ำอีกเลย
+// สำหรับคนนี้วันนี้ ไม่ว่าห้องจะแก้ไขรายงานยังไงต่อก็ตาม — ต่างจากการคืนคะแนนอัตโนมัติที่ toggle กลับได้)
+function handleCancelAutoDeduction(data) {
+  const ss          = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const dateStr      = normalizeDateParam(data.date);
+  const room         = normalizeRoom(data.room);
+  const studentName  = String(data.studentName || '').trim();
+  const cancelledBy  = String(data.reporterName || '').trim();
+  if (!dateStr || !room || !studentName) return respond({ status: 'error', message: 'ข้อมูลไม่ครบ' });
+  if (!cancelledBy) return respond({ status: 'error', message: 'กรุณาระบุชื่อผู้ยกเลิก' });
+
+  const behSheet = ss.getSheetByName('คะแนนความประพฤติ');
+  const rows     = behSheet.getDataRange().getValues();
+  let netAuto = 0, manualLocked = false;
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    if (cellDateStr(r[0]) !== dateStr) continue;
+    if (normalizeRoom(r[3]) !== room) continue;
+    if (String(r[4]).trim() !== studentName) continue;
+    const reason = String(r[6]).trim();
+    if (reason === AUTO_ABSENCE_REASON) netAuto++;
+    else if (reason === AUTO_RESTORE_REASON) netAuto--;
+    else if (reason === MANUAL_CANCEL_REASON) manualLocked = true;
+  }
+  if (manualLocked) return respond({ status: 'error', message: 'รายการนี้ถูกยกเลิกไปแล้ว' });
+  if (netAuto !== 1) return respond({ status: 'error', message: 'ไม่พบรายการหักอัตโนมัติที่ยังไม่ได้คืนคะแนนสำหรับวันนี้' });
+
+  const term    = getCurrentTermValue();
+  const timeStr = Utilities.formatDate(new Date(), TZ, 'HH:mm:ss');
+  behSheet.appendRow([dateStr, timeStr, term, room, studentName, 'เพิ่ม', MANUAL_CANCEL_REASON, AUTO_ABSENCE_POINTS, cancelledBy]);
+  return respond({ status: 'ok' });
 }
 
 // ------------------------------------------------------------

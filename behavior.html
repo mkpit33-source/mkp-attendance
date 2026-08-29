@@ -144,11 +144,16 @@
     <!-- ===== หน้า 2: ดูสรุปคะแนน ===== -->
     <div id="pageSummary" style="display:none;">
       <div class="form-card" style="max-width:680px;">
+        <div id="summaryAlertBox" class="alert" style="display:none;"></div>
         <div class="form-group">
           <label for="summaryRoom">เลือกห้อง</label>
           <select id="summaryRoom" class="form-control" onchange="loadSummary()">
             <option value="">— เลือกห้อง —</option>
           </select>
+        </div>
+        <div class="form-group">
+          <label for="cancelReporterName">ชื่อผู้ยกเลิก (กรอกก่อนกดปุ่ม "ยกเลิก" ในประวัติด้านล่าง)</label>
+          <input type="text" id="cancelReporterName" class="form-control" placeholder="เช่น นาย/นางสาว ชื่อ-นามสกุล">
         </div>
         <p class="summary-line" id="summaryTermNote" style="color:var(--muted,#666);"></p>
       </div>
@@ -366,6 +371,11 @@ async function submitBehavior() {
 }
 
 // ---------------- หน้าสรุปคะแนน ----------------
+// เก็บผลลัพธ์ล่าสุดไว้ ให้ปุ่ม "ยกเลิก" ในประวัติอ้างอิงกลับมาหาชื่อ/วันที่ได้ โดยไม่ต้องฝัง
+// ข้อความภาษาไทยดิบๆ ลงใน onclick attribute (กันปัญหา escape เครื่องหมายคำพูด/จุลภาคในชื่อ)
+let lastSummaryStudents = [];
+let lastSummaryRoom = '';
+
 async function loadSummary() {
   const room = document.getElementById('summaryRoom').value;
   const table = document.getElementById('summaryTable');
@@ -380,12 +390,23 @@ async function loadSummary() {
     const json = await res.json();
     if (json.status !== 'ok') { body.innerHTML = `<tr><td colspan="3">${json.message || 'เกิดข้อผิดพลาด'}</td></tr>`; return; }
 
+    lastSummaryStudents = json.students;
+    lastSummaryRoom = room;
+
     document.getElementById('summaryTermNote').textContent = `ภาคเรียนปัจจุบัน: ${json.term || '-'} (คะแนนเริ่มต้น 100 ต่อภาคเรียน)`;
 
     body.innerHTML = json.students.map((s, i) => {
       const scoreClass = s.score < 60 ? 'score-low' : 'score-ok';
       const historyHtml = s.history.length
-        ? s.history.map(h => `${h.date} ${h.time} — ${h.type} ${h.points} (${h.reason}) โดย ${h.reporter}`).join('<br>')
+        ? s.history.map((h, hIdx) => {
+            const line = `${h.date} ${h.time} — ${h.type} ${h.points} (${h.reason}) โดย ${h.reporter}`;
+            // ปุ่มยกเลิกโชว์เฉพาะแถวหักอัตโนมัติที่ยังไม่เคยถูกคืนคะแนน (isCancelled มาจาก
+            // handleBehaviorSummary ฝั่ง Apps Script — เทียบวันที่ที่มีแถว "คืนคะแนน" ตามหลังแล้วหรือยัง)
+            const cancelBtn = (h.isAutoDeduct && !h.isCancelled)
+              ? ` <button type="button" class="btn btn-outline" style="padding:0.15rem 0.5rem;font-size:0.7rem;" onclick="cancelDeduction(${i}, ${hIdx})">ยกเลิก</button>`
+              : '';
+            return line + cancelBtn;
+          }).join('<br>')
         : 'ไม่มีประวัติในภาคเรียนนี้';
       return `
         <tr>
@@ -401,13 +422,42 @@ async function loadSummary() {
   }
 }
 
+// ยกเลิกการหักคะแนนอัตโนมัติ (ขาดเรียน) รายการเดียว — ต้องกรอกชื่อผู้ยกเลิกในช่องด้านบนหน้านี้ก่อน
+async function cancelDeduction(studentIdx, historyIdx) {
+  const s = lastSummaryStudents[studentIdx];
+  const h = s && s.history[historyIdx];
+  if (!s || !h) return;
+
+  const cancelledBy = document.getElementById('cancelReporterName').value.trim();
+  if (!cancelledBy) { showAlert('กรุณากรอกชื่อผู้ยกเลิกก่อน', 'error', 'summaryAlertBox'); return; }
+
+  const ok = confirm(`ยกเลิกการหักคะแนนอัตโนมัติของ "${s.name}" วันที่ ${h.date}?\n\nคะแนนจะถูกคืนให้ทันที และการยกเลิกนี้ถาวร — ถ้าห้องแก้ไขรายงานเช็คชื่อวันนี้อีกภายหลังจนขาดอีก ระบบจะไม่หักคะแนนซ้ำให้อัตโนมัติแล้ว`);
+  if (!ok) return;
+
+  try {
+    const res  = await fetch(SCRIPT_URL, {
+      method: 'POST',
+      body: JSON.stringify({ action: 'cancelAutoDeduction', date: h.date, room: lastSummaryRoom, studentName: s.name, reporterName: cancelledBy }),
+    });
+    const json = await res.json();
+    if (json.status === 'ok') {
+      showAlert(`✓ ยกเลิกและคืนคะแนนให้ ${s.name} แล้ว`, 'success', 'summaryAlertBox');
+      loadSummary();
+    } else {
+      showAlert(json.message || 'ยกเลิกไม่สำเร็จ', 'error', 'summaryAlertBox');
+    }
+  } catch {
+    showAlert('ไม่สามารถเชื่อมต่อได้ กรุณาลองใหม่', 'error', 'summaryAlertBox');
+  }
+}
+
 function toggleHistory(i) {
   const box = document.getElementById(`histbox-${i}`);
   box.style.display = box.style.display === 'block' ? 'none' : 'block';
 }
 
-function showAlert(msg, type) {
-  const el = document.getElementById('alertBox');
+function showAlert(msg, type, elId) {
+  const el = document.getElementById(elId || 'alertBox');
   el.className = `alert alert-${type}`;
   el.textContent = msg;
   el.style.display = 'block';
