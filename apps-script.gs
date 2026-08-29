@@ -1389,10 +1389,38 @@ function handleCancelAutoDeduction(data) {
 //  ห้องไหนไม่มีรายงานเช้า/เย็นของวันนี้เลย หักนักเรียน "ทุกคน" ในห้องนั้นคนละ 2 คะแนนต่อรอบที่ขาด
 //  (ขาดทั้งสองรอบ = หัก 4) ไม่มีโควตา ไม่นับย้อนหลังก่อนวันเปิดใช้ฟีเจอร์นี้
 // ------------------------------------------------------------
+// เริ่มบังคับหักคะแนน "ไม่ส่งรายงาน" จริงตั้งแต่วันนี้เป็นต้นไปเท่านั้น (ครูยืนยัน 2569 — ให้เวลาปรับตัว
+// ก่อนเริ่มบังคับใช้จริงทั้งโรงเรียน) ก่อนหน้านี้ระบบจะไม่หักอะไรเลยแม้ trigger จะรันทุกวันเวลา 20:00 น.
+const MISSING_REPORT_START_DATE = '2026-09-01';
+
+// ข้ามวันเสาร์-อาทิตย์เสมอ (ไม่มีการเรียนอยู่แล้ว) + ข้ามวันที่อยู่ใน Sheet "วันหยุดเพิ่มเติม" ด้วย
+// (ครูเพิ่ม/แก้วันหยุดพิเศษเองได้ที่ Sheet นั้น คอลัมน์ A รูปแบบ yyyy-mm-dd ไม่ต้องแก้โค้ด)
+function isNonSchoolDay(dateStr, ss) {
+  const d = new Date(dateStr + 'T12:00:00'); // เที่ยงวัน กันปัญหาข้ามเขตเวลาทำให้วันเลื่อน
+  const dow = d.getDay(); // 0 = อาทิตย์, 6 = เสาร์
+  if (dow === 0 || dow === 6) return true;
+  const holSheet = ss.getSheetByName('วันหยุดเพิ่มเติม');
+  if (!holSheet) return false;
+  const rows = holSheet.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (normalizeDateParam(String(rows[i][0]).trim()) === dateStr) return true;
+  }
+  return false;
+}
+
 function checkMissingReports() {
   const ss      = SpreadsheetApp.openById(SPREADSHEET_ID);
   const dateStr = todayStr();
   const term    = getCurrentTermValue();
+
+  if (dateStr < MISSING_REPORT_START_DATE) {
+    Logger.log('checkMissingReports (' + dateStr + '): ยังไม่ถึงวันเริ่มบังคับ (' + MISSING_REPORT_START_DATE + ') ข้ามการหักคะแนน');
+    return;
+  }
+  if (isNonSchoolDay(dateStr, ss)) {
+    Logger.log('checkMissingReports (' + dateStr + '): เป็นวันหยุด (เสาร์-อาทิตย์ หรืออยู่ใน "วันหยุดเพิ่มเติม") ข้าม');
+    return;
+  }
 
   const roomRows = ss.getSheetByName('ห้องเรียน').getDataRange().getValues();
   const allRooms = [];
@@ -1442,6 +1470,52 @@ function checkMissingReports() {
     behSheet.getRange(startRow, 1, newRows.length, newRows[0].length).setValues(newRows);
   }
   Logger.log('checkMissingReports (' + dateStr + '): หักไป ' + newRows.length + ' แถว');
+}
+
+// ⚠️ รันครั้งเดียว — คืนคะแนน "ไม่ส่งรายงาน" ที่หักไปแล้วก่อนวันที่เริ่มบังคับจริง (MISSING_REPORT_START_DATE)
+// เพราะ trigger เคยรันไปแล้ว 1 ครั้งก่อนจะรู้ว่ายังไม่ควรบังคับใช้ (ครูยืนยันให้คืนคะแนนทุกคน 2569)
+// กันคืนซ้ำในตัว (เช็คว่ามีแถวคืนคะแนนของคนนั้น+วันนั้นอยู่แล้วหรือยัง) รันซ้ำได้ปลอดภัย
+function codyRefundEarlyMissingReportPenalty() {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const behSheet = ss.getSheetByName('คะแนนความประพฤติ');
+  const rows = behSheet.getDataRange().getValues();
+  const term = getCurrentTermValue();
+  const timeStr = Utilities.formatDate(new Date(), TZ, 'HH:mm:ss');
+
+  const cats = [DEDUCTION_CATEGORIES.MISSING_MORNING, DEDUCTION_CATEGORIES.MISSING_EVENING];
+  const alreadyRefunded = {}; // 'date|room|name|catKey' -> true
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    const reason = String(r[6]).trim();
+    cats.forEach(cat => {
+      if (reason === cat.cancelReason) {
+        alreadyRefunded[cellDateStr(r[0]) + '|' + r[3] + '|' + String(r[4]).trim() + '|' + cat.key] = true;
+      }
+    });
+  }
+
+  const newRows = [];
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    const dateStr = cellDateStr(r[0]);
+    if (dateStr >= MISSING_REPORT_START_DATE) continue; // เฉพาะก่อนวันเริ่มบังคับเท่านั้น
+    const reason = String(r[6]).trim();
+    const room = r[3];
+    const name = String(r[4]).trim();
+    cats.forEach(cat => {
+      if (reason !== cat.autoReason) return;
+      const key = dateStr + '|' + room + '|' + name + '|' + cat.key;
+      if (alreadyRefunded[key]) return;
+      newRows.push([dateStr, timeStr, term, room, name, 'เพิ่ม', cat.cancelReason, Number(r[7]) || cat.points, 'ระบบ (เลื่อนวันเริ่มบังคับ "ไม่ส่งรายงาน" เป็น ' + MISSING_REPORT_START_DATE + ')']);
+      alreadyRefunded[key] = true; // กันนับซ้ำถ้ามีแถวหักซ้ำวันเดียวกัน (ไม่ควรมี แต่กันไว้)
+    });
+  }
+
+  if (newRows.length) {
+    const startRow = behSheet.getLastRow() + 1;
+    behSheet.getRange(startRow, 1, newRows.length, newRows[0].length).setValues(newRows);
+  }
+  Logger.log('codyRefundEarlyMissingReportPenalty: คืนคะแนนไป ' + newRows.length + ' แถว');
 }
 
 // ------------------------------------------------------------
