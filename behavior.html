@@ -422,7 +422,7 @@ async function loadSummary() {
   }
 }
 
-// ยกเลิกการหักคะแนนอัตโนมัติ (ขาดเรียน) รายการเดียว — ต้องกรอกชื่อผู้ยกเลิกในช่องด้านบนหน้านี้ก่อน
+// ยกเลิกการหักคะแนนอัตโนมัติรายการเดียว (ขาด/สาย/ลากิจ/ลาป่วย/ไม่ส่งรายงาน) — ต้องกรอกชื่อผู้ยกเลิกในช่องด้านบนหน้านี้ก่อน
 async function cancelDeduction(studentIdx, historyIdx) {
   const s = lastSummaryStudents[studentIdx];
   const h = s && s.history[historyIdx];
@@ -431,13 +431,13 @@ async function cancelDeduction(studentIdx, historyIdx) {
   const cancelledBy = document.getElementById('cancelReporterName').value.trim();
   if (!cancelledBy) { showAlert('กรุณากรอกชื่อผู้ยกเลิกก่อน', 'error', 'summaryAlertBox'); return; }
 
-  const ok = confirm(`ยกเลิกการหักคะแนนอัตโนมัติของ "${s.name}" วันที่ ${h.date}?\n\nคะแนนจะถูกคืนให้ทันที และการยกเลิกนี้ถาวร — ถ้าห้องแก้ไขรายงานเช็คชื่อวันนี้อีกภายหลังจนขาดอีก ระบบจะไม่หักคะแนนซ้ำให้อัตโนมัติแล้ว`);
+  const ok = confirm(`ยกเลิกการหักคะแนนอัตโนมัติของ "${s.name}" วันที่ ${h.date} (${h.reason})?\n\nคะแนนจะถูกคืนให้ทันที และการยกเลิกนี้ถาวร — ถ้าห้องแก้ไขรายงานเช็คชื่อวันนี้อีกภายหลังจนเข้าเกณฑ์เดิมอีก ระบบจะไม่หักคะแนนซ้ำให้อัตโนมัติแล้ว`);
   if (!ok) return;
 
   try {
     const res  = await fetch(SCRIPT_URL, {
       method: 'POST',
-      body: JSON.stringify({ action: 'cancelAutoDeduction', date: h.date, room: lastSummaryRoom, studentName: s.name, reporterName: cancelledBy }),
+      body: JSON.stringify({ action: 'cancelAutoDeduction', date: h.date, room: lastSummaryRoom, studentName: s.name, category: h.category, reporterName: cancelledBy }),
     });
     const json = await res.json();
     if (json.status === 'ok') {
