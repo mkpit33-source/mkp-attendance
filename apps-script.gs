@@ -75,6 +75,10 @@ function setupSheets() {
         'ผู้รายงาน',
       ] },
     { name: 'วันหยุดเพิ่มเติม',  headers: ['วันที่ (yyyy-mm-dd)', 'หมายเหตุ'] },
+    // ---- งานกิจการนักเรียน: วันเสาร์-อาทิตย์ที่มีเรียนจริง (เพิ่ม 2569) ----
+    // ใช้กับระบบตรวจ "ไม่ส่งรายงาน" — ปกติข้ามเสาร์-อาทิตย์อัตโนมัติเสมอ แต่ถ้าวันนั้นมีเรียนจริง (เช่น
+    // เสาร์ชดเชย) ให้เพิ่มวันที่ในนี้ ระบบจะตรวจ "ไม่ส่งรายงาน" ตามปกติในวันนั้นแม้จะตรงเสาร์-อาทิตย์
+    { name: 'วันเรียนพิเศษ',    headers: ['วันที่ (yyyy-mm-dd)', 'หมายเหตุ'] },
     // ---- งานกิจการนักเรียน: เช็คกลับ 15:30 (เพิ่ม 2569) ----
     // เช็คอิสระเต็มรูปแบบเหมือนเช้าทุกประการ (ไม่กรองจากข้อมูลเช้า) หมวดหมู่เดียวกับเช้าเป๊ะ
     // (มา/ขาด/ลากิจ/ลาป่วย/ไปกิจกรรม) แค่ไม่แยกชาย/หญิง เพราะไม่มีฟอร์มกระดาษราชการบังคับ
@@ -1393,19 +1397,29 @@ function handleCancelAutoDeduction(data) {
 // ก่อนเริ่มบังคับใช้จริงทั้งโรงเรียน) ก่อนหน้านี้ระบบจะไม่หักอะไรเลยแม้ trigger จะรันทุกวันเวลา 20:00 น.
 const MISSING_REPORT_START_DATE = '2026-09-01';
 
-// ข้ามวันเสาร์-อาทิตย์เสมอ (ไม่มีการเรียนอยู่แล้ว) + ข้ามวันที่อยู่ใน Sheet "วันหยุดเพิ่มเติม" ด้วย
-// (ครูเพิ่ม/แก้วันหยุดพิเศษเองได้ที่ Sheet นั้น คอลัมน์ A รูปแบบ yyyy-mm-dd ไม่ต้องแก้โค้ด)
-function isNonSchoolDay(dateStr, ss) {
-  const d = new Date(dateStr + 'T12:00:00'); // เที่ยงวัน กันปัญหาข้ามเขตเวลาทำให้วันเลื่อน
-  const dow = d.getDay(); // 0 = อาทิตย์, 6 = เสาร์
-  if (dow === 0 || dow === 6) return true;
-  const holSheet = ss.getSheetByName('วันหยุดเพิ่มเติม');
-  if (!holSheet) return false;
-  const rows = holSheet.getDataRange().getValues();
+// เช็คว่าวันที่ระบุมีอยู่ใน Sheet ที่กำหนดหรือไม่ (คอลัมน์ A รูปแบบ yyyy-mm-dd) — ใช้ร่วมกันทั้ง
+// "วันหยุดเพิ่มเติม" และ "วันเรียนพิเศษ"
+function isDateInSheet(dateStr, ss, sheetName) {
+  const sheet = ss.getSheetByName(sheetName);
+  if (!sheet) return false;
+  const rows = sheet.getDataRange().getValues();
   for (let i = 1; i < rows.length; i++) {
     if (normalizeDateParam(String(rows[i][0]).trim()) === dateStr) return true;
   }
   return false;
+}
+
+// ตรวจว่าวันนี้ "ไม่มีเรียน" หรือไม่ — ลำดับการเช็ค (ข้อไหนตรงก่อนใช้ข้อนั้น ไม่เช็คข้อถัดไป):
+// 1) อยู่ใน "วันเรียนพิเศษ" → ถือว่ามีเรียน (ชนะทุกกรณี แม้จะตรงเสาร์-อาทิตย์ เช่น เสาร์ชดเชย)
+// 2) เป็นเสาร์-อาทิตย์ → ไม่มีเรียน
+// 3) อยู่ใน "วันหยุดเพิ่มเติม" → ไม่มีเรียน
+// ครูเพิ่ม/แก้วันที่เองได้ทั้ง 2 Sheet โดยไม่ต้องแก้โค้ด
+function isNonSchoolDay(dateStr, ss) {
+  if (isDateInSheet(dateStr, ss, 'วันเรียนพิเศษ')) return false;
+  const d = new Date(dateStr + 'T12:00:00'); // เที่ยงวัน กันปัญหาข้ามเขตเวลาทำให้วันเลื่อน
+  const dow = d.getDay(); // 0 = อาทิตย์, 6 = เสาร์
+  if (dow === 0 || dow === 6) return true;
+  return isDateInSheet(dateStr, ss, 'วันหยุดเพิ่มเติม');
 }
 
 function checkMissingReports() {
