@@ -159,7 +159,7 @@
       </div>
       <div style="max-width:680px; overflow-x:auto;">
         <table class="score-table" id="summaryTable" style="display:none;">
-          <thead><tr><th>ชื่อ</th><th>คะแนนคงเหลือ</th><th></th></tr></thead>
+          <thead><tr><th>ชื่อ</th><th>ขาด</th><th>ลากิจ</th><th>ลาป่วย</th><th>สาย</th><th>หนี</th><th>คะแนนคงเหลือ</th><th></th></tr></thead>
           <tbody id="summaryBody"></tbody>
         </table>
       </div>
@@ -382,13 +382,13 @@ async function loadSummary() {
   const body  = document.getElementById('summaryBody');
   if (!room) { table.style.display = 'none'; return; }
 
-  body.innerHTML = '<tr><td colspan="3">กำลังโหลด...</td></tr>';
+  body.innerHTML = '<tr><td colspan="8">กำลังโหลด...</td></tr>';
   table.style.display = 'table';
 
   try {
     const res  = await fetch(`${SCRIPT_URL}?action=behaviorSummary&room=${encodeURIComponent(room)}`);
     const json = await res.json();
-    if (json.status !== 'ok') { body.innerHTML = `<tr><td colspan="3">${json.message || 'เกิดข้อผิดพลาด'}</td></tr>`; return; }
+    if (json.status !== 'ok') { body.innerHTML = `<tr><td colspan="8">${json.message || 'เกิดข้อผิดพลาด'}</td></tr>`; return; }
 
     lastSummaryStudents = json.students;
     lastSummaryRoom = room;
@@ -411,14 +411,19 @@ async function loadSummary() {
       return `
         <tr>
           <td>${s.name}</td>
+          <td>${s.absentCount}</td>
+          <td>${s.personalLeaveCount}</td>
+          <td>${s.sickLeaveCount}</td>
+          <td>${s.lateCount}</td>
+          <td>${s.truantCount}</td>
           <td class="${scoreClass}">${s.score}</td>
           <td><button type="button" class="btn btn-outline" style="padding:0.3rem 0.7rem;font-size:0.8rem;" onclick="toggleHistory(${i})">ดูประวัติ</button></td>
         </tr>
-        <tr class="history-row" id="hist-${i}"><td colspan="3"><div class="history-box" id="histbox-${i}">${historyHtml}</div></td></tr>
+        <tr class="history-row" id="hist-${i}"><td colspan="8"><div class="history-box" id="histbox-${i}">${historyHtml}</div></td></tr>
       `;
     }).join('');
   } catch {
-    body.innerHTML = '<tr><td colspan="3">ไม่สามารถเชื่อมต่อได้</td></tr>';
+    body.innerHTML = '<tr><td colspan="8">ไม่สามารถเชื่อมต่อได้</td></tr>';
   }
 }
 

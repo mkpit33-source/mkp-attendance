@@ -1176,7 +1176,28 @@ function handleBehaviorSummary(params) {
     });
   }
 
-  const students = roster.map(name => ({ name, score: scores[name], history: history[name] }));
+  // นับจำนวนครั้งต่อคนสำหรับตารางสรุป — ขาด/ลากิจ/ลาป่วย/สาย นับเฉพาะรายการอัตโนมัติที่ยัง active
+  // จริง (isAutoDeduct && !isCancelled — ตรงกับตรรกะเดียวกับที่ใช้โชว์ปุ่ม "ยกเลิก" ด้านบน จึงไม่มี
+  // ทางนับซ้ำ/นับที่ยกเลิกไปแล้ว) ส่วน "หนี" ยังไม่มีระบบอัตโนมัติ นับจากรายการที่ครูกรอกเองด้วยเหตุผล
+  // "หนีเรียน"/"หนีกิจกรรม" ตรงๆ (ไม่มีกลไกยกเลิกแยกสำหรับหนี จึงนับทุกแถวที่เจอ)
+  function countByCategory(hist, catKey) {
+    return hist.filter(h => h.category === catKey && h.isAutoDeduct && !h.isCancelled).length;
+  }
+  function countTruant(hist) {
+    return hist.filter(h => h.reason === 'หนีเรียน' || h.reason === 'หนีกิจกรรม').length;
+  }
+
+  const students = roster.map(name => {
+    const hist = history[name];
+    return {
+      name, score: scores[name], history: hist,
+      absentCount: countByCategory(hist, 'ABSENT'),
+      personalLeaveCount: countByCategory(hist, 'PERSONAL_LEAVE'),
+      sickLeaveCount: countByCategory(hist, 'SICK_LEAVE'),
+      lateCount: countByCategory(hist, 'LATE'),
+      truantCount: countTruant(hist),
+    };
+  });
   return respond({ status: 'ok', term, students });
 }
 
