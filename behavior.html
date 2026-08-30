@@ -40,6 +40,7 @@
     <li><a href="report.html">เช็คชื่อเช้า</a></li>
     <li><a href="report-evening.html">เช็คกลับเย็น</a></li>
     <li><a href="dashboard.html">แดชบอร์ดเช็คชื่อ</a></li>
+    <li><a href="attendance-summary.html">สรุปรายบุคคล</a></li>
     <li><a href="settings.html">⚙️ ตั้งค่าเบื้องหลัง</a></li>
   </ul>
 </nav>
@@ -93,10 +94,13 @@
         </div>
 
         <div class="form-group">
-          <label for="studentName">นักเรียน</label>
-          <select id="studentName" class="form-control">
-            <option value="">— เลือกห้องก่อน —</option>
-          </select>
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <label style="margin:0;">นักเรียน (เลือกได้หลายคน)</label>
+            <button type="button" class="btn btn-outline" style="padding:0.2rem 0.6rem;font-size:0.75rem;" onclick="toggleSelectAllStudents()">เลือก/ยกเลิกทั้งห้อง</button>
+          </div>
+          <div id="studentCheckboxes" class="form-control" style="height:auto; max-height:220px; overflow-y:auto; padding:0.5rem;">
+            <p style="margin:0; color:var(--muted,#666);">— เลือกห้องก่อน —</p>
+          </div>
         </div>
 
         <div class="form-group" id="reasonDeductGroup">
@@ -288,33 +292,49 @@ function onReasonChange() {
   }
 }
 
-// ---------------- โหลดรายชื่อนักเรียนของห้อง (ใช้ endpoint students เดิม) ----------------
+// ---------------- โหลดรายชื่อนักเรียนของห้อง (ใช้ endpoint students เดิม) — checkbox เลือกได้หลายคน 2569 ----------------
 async function loadRoster() {
   const room = document.getElementById('room').value;
-  const sel  = document.getElementById('studentName');
-  if (!room) { sel.innerHTML = '<option value="">— เลือกห้องก่อน —</option>'; return; }
-  sel.innerHTML = '<option value="">— กำลังโหลด... —</option>';
+  const box  = document.getElementById('studentCheckboxes');
+  if (!room) { box.innerHTML = '<p style="margin:0; color:var(--muted,#666);">— เลือกห้องก่อน —</p>'; return; }
+  box.innerHTML = '<p style="margin:0; color:var(--muted,#666);">— กำลังโหลด... —</p>';
   try {
     const res  = await fetch(`${SCRIPT_URL}?action=students&room=${encodeURIComponent(room)}`);
     const json = await res.json();
     if (json.status === 'ok' && json.students.length) {
-      sel.innerHTML = '<option value="">— เลือกนักเรียน —</option>' +
-        json.students.map(s => `<option value="${s.name}">${s.no}. ${s.name}</option>`).join('');
+      box.innerHTML = json.students.map((s, i) => `
+        <label style="display:flex; align-items:center; gap:0.4rem; padding:0.15rem 0; font-weight:400;">
+          <input type="checkbox" class="student-check" value="${s.name}" id="stu-${i}">
+          ${s.no}. ${s.name}
+        </label>
+      `).join('');
     } else {
-      sel.innerHTML = '<option value="">— ไม่มีรายชื่อนักเรียนในห้องนี้ —</option>';
+      box.innerHTML = '<p style="margin:0; color:var(--muted,#666);">— ไม่มีรายชื่อนักเรียนในห้องนี้ —</p>';
     }
   } catch {
-    sel.innerHTML = '<option value="">— โหลดไม่สำเร็จ —</option>';
+    box.innerHTML = '<p style="margin:0; color:var(--muted,#666);">— โหลดไม่สำเร็จ —</p>';
   }
+}
+
+// เลือก/ยกเลิกทั้งห้องในคลิกเดียว — ถ้ามีคนติ๊กอยู่แล้วบางส่วน ให้ถือว่า "ยังไม่เลือกครบ" แล้วเลือกให้ครบก่อน
+function toggleSelectAllStudents() {
+  const boxes = document.querySelectorAll('#studentCheckboxes .student-check');
+  if (!boxes.length) return;
+  const allChecked = Array.from(boxes).every(b => b.checked);
+  boxes.forEach(b => { b.checked = !allChecked; });
+}
+
+function getSelectedStudentNames() {
+  return Array.from(document.querySelectorAll('#studentCheckboxes .student-check:checked')).map(b => b.value);
 }
 
 // ---------------- ส่งบันทึก ----------------
 async function submitBehavior() {
-  const room        = document.getElementById('room').value;
-  const studentName = document.getElementById('studentName').value;
+  const room         = document.getElementById('room').value;
+  const studentNames = getSelectedStudentNames();
   const reporterName = document.getElementById('reporterName').value.trim();
 
-  if (!room || !studentName) { showAlert('กรุณาเลือกห้องและนักเรียนก่อน', 'error'); return; }
+  if (!room || !studentNames.length) { showAlert('กรุณาเลือกห้องและนักเรียนอย่างน้อย 1 คน', 'error'); return; }
 
   let reason, points;
   if (currentType === 'หัก') {
@@ -350,12 +370,14 @@ async function submitBehavior() {
   try {
     const res = await fetch(SCRIPT_URL, {
       method: 'POST',
-      body: JSON.stringify({ action: 'submitBehavior', room, studentName, type: currentType, reason, points, reporterName }),
+      body: JSON.stringify({ action: 'submitBehavior', room, studentNames, type: currentType, reason, points, reporterName }),
     });
     const json = await res.json();
     if (json.status === 'ok') {
-      showAlert(`✓ บันทึกสำเร็จ! ${studentName} — ${currentType} ${points} คะแนน (${reason})`, 'success');
+      const who = studentNames.length === 1 ? studentNames[0] : `${studentNames.length} คน`;
+      showAlert(`✓ บันทึกสำเร็จ! ${who} — ${currentType} ${points} คะแนน (${reason})`, 'success');
       document.getElementById('reporterName').value = reporterName; // เก็บชื่อผู้รายงานไว้ให้กรอกต่อเนื่องได้
+      document.querySelectorAll('#studentCheckboxes .student-check').forEach(b => { b.checked = false; }); // เคลียร์การเลือกหลังบันทึกสำเร็จ
       document.getElementById('customPoints').value = '';
       document.getElementById('meritOtherReason').value = '';
       document.getElementById('meritCustomPoints').value = '';

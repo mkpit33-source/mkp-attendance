@@ -190,6 +190,7 @@ function doGet(e) {
     if (action === 'today')    return handleByDate(todayStr());
     if (action === 'bydate')   return handleByDate(e.parameter.date);
     if (action === 'rangeSummary') return handleRangeSummary(e.parameter);
+    if (action === 'studentRangeSummary') return handleStudentRangeSummary(e.parameter);
     // ---- งานกิจการนักเรียน: เช็คกลับ 15:30 ----
     if (action === 'eveningByDate')    return handleEveningByDate(e.parameter.date || todayStr());
     if (action === 'dailyComparison')  return handleDailyComparison(e.parameter);
@@ -798,6 +799,105 @@ function getDailyComparisonData(dateStr, room, ctx) {
   return { room, morningDone, eveningDone, total: roster.length, students, summary };
 }
 
+// ==============================================================
+//  งานกิจการนักเรียน — สรุปการมาเรียนรายบุคคล (ไม่ใส่ PIN, attendance-summary.html)
+//  นับต่อคนจากการเทียบเช้า-เย็นจริงทั้งช่วงเวลาที่เลือก ใช้กฎเดียวกับ deriveDailyResult
+//  แต่ไม่ยุบ ลากิจ/ลาป่วย และ มา/ไปกิจกรรม เป็นกลุ่มเดียวแบบที่ deriveDailyResult ทำ
+// ==============================================================
+
+// doGet action=studentRangeSummary
+function handleStudentRangeSummary(params) {
+  const startDate = normalizeDateParam(params.startDate || '');
+  const endDate   = normalizeDateParam(params.endDate || '');
+  if (!startDate || !endDate) return respond({ status: 'error', message: 'กรุณาระบุช่วงวันที่' });
+  if (startDate > endDate) return respond({ status: 'error', message: 'ช่วงวันที่ไม่ถูกต้อง' });
+  return respond(getStudentRangeSummaryData(startDate, endDate, normalizeRoom(params.room || '')));
+}
+
+// เหมือน deriveDailyResult ทุกกฎ แต่แยกย่อยกว่า — ใช้กฎชนะเดียวกับ reconcileAbsenceDeduction
+// (ลาป่วยชนะลากิจ, ไปกิจกรรมชนะมาปกติ เมื่อฝั่งใดฝั่งหนึ่งเป็นแบบนั้น) ให้ตรงกันทั้งระบบ
+// ฟังก์ชัน pure ไม่แตะ Sheet ใดๆ — ทดสอบแยกได้ด้วย Node ตรงๆ
+function categorizeDay(morningStatus, eveningStatus) {
+  const mB = statusBucket(morningStatus);
+  const eB = statusBucket(eveningStatus);
+  if (mB === 'LEAVE' || eB === 'LEAVE') {
+    return (morningStatus === 'ลาป่วย' || eveningStatus === 'ลาป่วย') ? 'sickLeave' : 'personalLeave';
+  }
+  if (mB === 'PRESENT' && eB === 'PRESENT') {
+    return (morningStatus === 'ไปกิจกรรม' || eveningStatus === 'ไปกิจกรรม') ? 'activity' : 'present';
+  }
+  if (mB === 'ABSENT' && eB === 'PRESENT') return 'late';   // เช้าขาด เย็นมา = สาย
+  if (mB === 'PRESENT' && eB === 'ABSENT') return 'truant'; // เช้ามา เย็นขาด = หนี
+  return 'absent'; // ขาดทั้งคู่
+}
+
+const RANGE_SUMMARY_CATS = ['present', 'absent', 'personalLeave', 'sickLeave', 'late', 'truant', 'activity'];
+
+function getStudentRangeSummaryData(startDate, endDate, room) {
+  const ctx = loadComparisonContext();
+  const filterToOneRoom = room && room !== 'all'; // true = กรองห้องเดียว, false = ทุกห้อง
+
+  // roster: room -> [ชื่อ] กรองเฉพาะห้องที่ระบุถ้ามี
+  const rosterByRoom = {};
+  for (let i = 1; i < ctx.stuRows.length; i++) {
+    const r = normalizeRoom(ctx.stuRows[i][0]);
+    if (!r || !ctx.stuRows[i][2]) continue;
+    if (filterToOneRoom && r !== room) continue;
+    (rosterByRoom[r] = rosterByRoom[r] || []).push(String(ctx.stuRows[i][2]).trim());
+  }
+
+  // index แถวเช้า/เย็นตาม `date|room` เฉพาะช่วงวันที่+ห้องที่เกี่ยวข้อง กันสแกนซ้ำทุกวัน
+  function indexLog(rows) {
+    const idx = {};
+    for (let i = 1; i < rows.length; i++) {
+      const r = rows[i];
+      const date = cellDateStr(r[0]);
+      if (date < startDate || date > endDate) continue;
+      const rm = normalizeRoom(r[1]);
+      if (!(rm in rosterByRoom)) continue;
+      idx[date + '|' + rm] = r;
+    }
+    return idx;
+  }
+  const morningIdx = indexLog(ctx.morningLog);
+  const eveningIdx = indexLog(ctx.eveningLog);
+
+  // นับต่อคน — key เป็น room+name กันชนกันกรณีคนละห้องแต่ชื่อซ้ำ (แสดงผลใช้แค่ name/room แยก field)
+  const counters = {};
+  Object.keys(rosterByRoom).forEach(rm => {
+    rosterByRoom[rm].forEach(name => {
+      const key = rm + '||' + name;
+      counters[key] = { name, room: rm };
+      RANGE_SUMMARY_CATS.forEach(c => { counters[key][c] = 0; });
+    });
+  });
+
+  // เดินเฉพาะวันที่ห้องนั้นส่งครบทั้งเช้า-เย็น (ยังไม่ครบ = ไม่เดา ข้ามวันนั้นไปเลย เหมือน getDailyComparisonData)
+  Object.keys(morningIdx).forEach(key => {
+    if (!(key in eveningIdx)) return;
+    const rm = key.split('|')[1];
+    const roster = rosterByRoom[rm];
+    const morningMap = statusMapFromRow(roster, morningIdx[key], MORNING_NAME_COLS);
+    const eveningMap = statusMapFromRow(roster, eveningIdx[key], EVENING_NAME_COLS);
+    roster.forEach(name => {
+      const cat = categorizeDay(morningMap[name], eveningMap[name]);
+      counters[rm + '||' + name][cat]++;
+    });
+  });
+
+  const totals = { present: 0, absent: 0, personalLeave: 0, sickLeave: 0, late: 0, truant: 0, activity: 0, total: 0 };
+  const students = Object.keys(counters).map(key => {
+    const c = counters[key];
+    c.total = RANGE_SUMMARY_CATS.reduce((sum, cat) => sum + c[cat], 0);
+    RANGE_SUMMARY_CATS.forEach(cat => { totals[cat] += c[cat]; });
+    totals.total += c.total;
+    return c;
+  });
+  students.sort((a, b) => a.room === b.room ? a.name.localeCompare(b.name, 'th') : a.room.localeCompare(b.room, 'th'));
+
+  return { status: 'ok', startDate, endDate, room: room || 'all', students, totals };
+}
+
 // doGet action=dailyComparison — ระบุ room คืนห้องเดียว, ไม่ระบุ room คืนทุกห้อง (ใช้โดยแดชบอร์ด)
 function handleDailyComparison(params) {
   const dateStr = normalizeDateParam(params.date || todayStr());
@@ -1089,6 +1189,8 @@ function handleDeleteCriteria(data) {
 //  บันทึกเหตุการณ์หัก/เพิ่มคะแนน — append แถวใหม่เสมอ (ไม่ upsert เหมือนเช็คชื่อ)
 //  เพราะแต่ละเหตุการณ์เป็นคนละเรื่องกัน ต้องเก็บเป็นประวัติทุกรายการ ไม่ทับกัน
 // ------------------------------------------------------------
+// รับ studentNames เป็น array เสมอ (เลือกได้หลายคนพร้อมกันจากหน้า behavior.html 2569) —
+// เหตุผล/คะแนน/ผู้รายงานเหมือนกันทุกคน ต่างกันแค่ studentName ต่อแถว
 function handleSubmitBehavior(data) {
   const ss   = SpreadsheetApp.openById(SPREADSHEET_ID);
   const term = getCurrentTermValue();
@@ -1099,14 +1201,18 @@ function handleSubmitBehavior(data) {
 
   const type   = data.type === 'เพิ่ม' ? 'เพิ่ม' : 'หัก'; // กันค่าแปลกปลอมหลุดเข้ามาจากภายนอก
   const points = Math.abs(Number(data.points) || 0);
+  const reason = String(data.reason || '').trim();
+  const reporterName = String(data.reporterName || '').trim();
 
-  const rowValues = [
-    dateStr, timeStr, term, data.room, String(data.studentName || '').trim(),
-    type, String(data.reason || '').trim(), points, String(data.reporterName || '').trim(),
-  ];
+  const studentNames = (Array.isArray(data.studentNames) ? data.studentNames : [])
+    .map(n => String(n || '').trim()).filter(Boolean);
+  if (!studentNames.length) return respond({ status: 'error', message: 'กรุณาเลือกนักเรียนอย่างน้อย 1 คน' });
 
-  ss.getSheetByName('คะแนนความประพฤติ').appendRow(rowValues);
-  return respond({ status: 'ok' });
+  const sheet = ss.getSheetByName('คะแนนความประพฤติ');
+  const rows = studentNames.map(name => [dateStr, timeStr, term, data.room, name, type, reason, points, reporterName]);
+  sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, rows[0].length).setValues(rows);
+
+  return respond({ status: 'ok', count: studentNames.length });
 }
 
 // ------------------------------------------------------------
