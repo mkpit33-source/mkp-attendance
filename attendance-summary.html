@@ -26,6 +26,9 @@
     table.att-table td:first-child, table.att-table th:first-child { text-align: left; }
     table.att-table th { background: #fafafa; font-weight: 700; }
     .table-wrap { overflow-x: auto; }
+    .detail-box { display: none; background: #fbfbfb; padding: 0.6rem 0.8rem; font-size: 0.85rem; text-align: left; white-space: normal; }
+    .detail-box .cat-line { margin: 0.2rem 0; }
+    .detail-box .cat-label { font-weight: 700; }
   </style>
 </head>
 <body>
@@ -103,7 +106,7 @@
       <thead>
         <tr>
           <th>ชื่อ</th><th>ห้อง</th><th>มา</th><th>ขาด</th><th>ลากิจ</th><th>ลาป่วย</th>
-          <th>สาย</th><th>หนี</th><th>ไปกิจกรรม</th><th>รวม</th>
+          <th>สาย</th><th>หนี</th><th>ไปกิจกรรม</th><th>รวม</th><th>คะแนนคงเหลือ</th><th></th>
         </tr>
       </thead>
       <tbody id="summaryBody"></tbody>
@@ -116,8 +119,11 @@
 </div>
 
 <script>
-const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxaWr7ze987_kshAusuikxaDgwGTiHu7-3JI4VVCsKx6ElHFx5xq1Wh0R4utAecSQ1O/exec';
-const COLS = 10;
+const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbwD6H5SAdTiPt1qvf2KPPYKiuFaBr8Bllqw-uoWEU8eabDw3iIrLOh9RFBJWf-lp_D3/exec';
+const COLS = 12;
+let lastStudents = [];
+let lastRangeStart = '', lastRangeEnd = '';
+const detailCache = {}; // key: `${room}||${name}` -> dates object จาก studentDayDetail (กันโหลดซ้ำ)
 
 function init() {
   const today = new Date().toLocaleDateString('sv-SE');
@@ -197,10 +203,14 @@ async function loadSummary(startDate, endDate, room) {
       body.innerHTML = `<tr><td colspan="${COLS}">${json.message || 'เกิดข้อผิดพลาด'}</td></tr>`;
       return;
     }
+    lastStudents = json.students;
+    lastRangeStart = startDate;
+    lastRangeEnd = endDate;
+    for (const k in detailCache) delete detailCache[k]; // ช่วงเวลาเปลี่ยน แคชเก่าใช้ไม่ได้แล้ว
     renderTotals(json.totals);
     renderTable(json.students);
     renderRoomStats(json.roomStats);
-    note.textContent = `ช่วงวันที่ ${thaiDateLabel(startDate)} - ${thaiDateLabel(endDate)} — นับเฉพาะวันที่ห้องส่งรายงานครบทั้งเช้าและเย็น`;
+    note.textContent = `ช่วงวันที่ ${thaiDateLabel(startDate)} - ${thaiDateLabel(endDate)} — นับวันที่มีข้อมูลอย่างน้อยฝั่งใดฝั่งหนึ่ง (สาย/หนี ต้องมีครบทั้งเช้าและเย็นเท่านั้น ไม่งั้นเดาไม่ได้)`;
   } catch {
     body.innerHTML = `<tr><td colspan="${COLS}">ไม่สามารถเชื่อมต่อได้</td></tr>`;
   }
@@ -244,13 +254,59 @@ function renderTable(students) {
     body.innerHTML = `<tr><td colspan="${COLS}">ไม่พบข้อมูลในช่วงเวลาที่เลือก</td></tr>`;
     return;
   }
-  body.innerHTML = students.map(s => `
+  body.innerHTML = students.map((s, i) => `
     <tr>
       <td>${s.name}</td><td>${s.room}</td>
       <td>${s.present}</td><td>${s.absent}</td><td>${s.personalLeave}</td><td>${s.sickLeave}</td>
       <td>${s.late}</td><td>${s.truant}</td><td>${s.activity}</td><td>${s.total}</td>
+      <td>${s.score}</td>
+      <td><button type="button" class="btn btn-outline" style="padding:0.2rem 0.6rem;font-size:0.75rem;" onclick="toggleDetail(${i})">ดูรายละเอียด</button></td>
     </tr>
+    <tr class="detail-row" id="detail-row-${i}"><td colspan="${COLS}"><div class="detail-box" id="detail-box-${i}"></div></td></tr>
   `).join('');
+}
+
+const DETAIL_CAT_LABELS = {
+  absent: 'ขาด', personalLeave: 'ลากิจ', sickLeave: 'ลาป่วย',
+  late: 'สาย', truant: 'หนี', activity: 'ไปกิจกรรม', present: 'มา',
+};
+// เรียงหมวดที่ควรสนใจก่อน (มา ไม่ค่อยต้องดูรายวัน เลยไว้ท้ายสุด)
+const DETAIL_CAT_ORDER = ['absent', 'late', 'truant', 'personalLeave', 'sickLeave', 'activity', 'present'];
+
+function thaiShortDate(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  return d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short' });
+}
+
+async function toggleDetail(i) {
+  const box = document.getElementById(`detail-box-${i}`);
+  const willShow = box.style.display !== 'block';
+  box.style.display = willShow ? 'block' : 'none';
+  if (!willShow) return;
+
+  const s = lastStudents[i];
+  if (!s) return;
+  const cacheKey = `${s.room}||${s.name}`;
+
+  if (!(cacheKey in detailCache)) {
+    box.textContent = 'กำลังโหลด...';
+    try {
+      const res = await fetch(`${SCRIPT_URL}?action=studentDayDetail&startDate=${encodeURIComponent(lastRangeStart)}&endDate=${encodeURIComponent(lastRangeEnd)}&room=${encodeURIComponent(s.room)}&name=${encodeURIComponent(s.name)}`);
+      const json = await res.json();
+      if (json.status !== 'ok') { box.textContent = json.message || 'เกิดข้อผิดพลาด'; return; }
+      detailCache[cacheKey] = json.dates;
+    } catch {
+      box.textContent = 'ไม่สามารถเชื่อมต่อได้';
+      return;
+    }
+  }
+
+  const dates = detailCache[cacheKey];
+  const lines = DETAIL_CAT_ORDER
+    .filter(cat => dates[cat] && dates[cat].length)
+    .map(cat => `<p class="cat-line"><span class="cat-label">${DETAIL_CAT_LABELS[cat]} (${dates[cat].length}):</span> ${dates[cat].map(thaiShortDate).join(', ')}</p>`)
+    .join('');
+  box.innerHTML = lines || 'ไม่มีข้อมูลในช่วงเวลาที่เลือก';
 }
 
 // ---------------- ฟังก์ชันช่วยเรื่องวันที่ (ก็อปจาก dashboard.html ให้ตรงกัน) ----------------

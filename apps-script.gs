@@ -191,6 +191,7 @@ function doGet(e) {
     if (action === 'bydate')   return handleByDate(e.parameter.date);
     if (action === 'rangeSummary') return handleRangeSummary(e.parameter);
     if (action === 'studentRangeSummary') return handleStudentRangeSummary(e.parameter);
+    if (action === 'studentDayDetail') return handleStudentDayDetail(e.parameter);
     // ---- งานกิจการนักเรียน: เช็คกลับ 15:30 ----
     if (action === 'eveningByDate')    return handleEveningByDate(e.parameter.date || todayStr());
     if (action === 'dailyComparison')  return handleDailyComparison(e.parameter);
@@ -756,8 +757,13 @@ const MORNING_NAME_COLS = EVENING_NAME_COLS; // เช็คชื่อรา�
 
 // เปรียบเทียบเช้า-เย็นของห้อง/วันที่ระบุ 1 ห้อง — คืนสถานะรายคน + สรุปนับแต่ละผลลัพธ์
 // รับ ctx (จาก loadComparisonContext) เป็น optional เพื่อไม่ต้องอ่านชีทซ้ำเวลาวนหลายห้อง
-function getDailyComparisonData(dateStr, room, ctx) {
+// opts.lenient: ถ้ามีแค่ฝั่งเดียว (ไม่ใช่ทั้งคู่ขาด) ให้ตัดสินจากฝั่งที่มีแทน 'ไม่ทราบ' — ใช้เฉพาะ
+// จุดที่ปลอดภัย (หน้ารายงานย้อนหลัง, การหักคะแนนตอน 20:00 หลังรอทั้งวันแล้ว) ค่า default คือ false
+// (เข้มงวดแบบเดิม) ห้ามเปลี่ยน default เพราะ reconcileAbsenceDeduction เรียกแบบ real-time ต้องรอครบคู่
+// เท่านั้น ไม่งั้นจะหักคะแนนก่อนถึงเวลาเช็คกลับจริง (ดูคอมเมนต์ที่ reconcileAbsenceDeduction)
+function getDailyComparisonData(dateStr, room, ctx, opts) {
   ctx = ctx || loadComparisonContext();
+  opts = opts || {};
   room = normalizeRoom(room);
 
   const roster = [];
@@ -781,12 +787,17 @@ function getDailyComparisonData(dateStr, room, ctx) {
 
   const students = roster.map(name => {
     if (!morningDone || !eveningDone) {
-      return {
-        name,
-        morningStatus: morningDone ? morningMap[name] : null,
-        eveningStatus: eveningDone ? eveningMap[name] : null,
-        result: 'ไม่ทราบ', // รอข้อมูลอีกฝั่ง ไม่เดาผล
-      };
+      const morningStatus = morningDone ? morningMap[name] : null;
+      const eveningStatus = eveningDone ? eveningMap[name] : null;
+      // lenient + มีข้อมูลฝั่งใดฝั่งหนึ่งจริง (ไม่ใช่ขาดทั้งคู่) → ตัดสินจากฝั่งที่มีแทนการรอ
+      // (สาย/หนี ไม่มีทางเดาได้จากฝั่งเดียว จึงไม่ใช้ deriveDailyResult ตรงนี้ — ใช้ statusBucket เอง)
+      if (opts.lenient && (morningDone || eveningDone)) {
+        const singleStatus = morningDone ? morningStatus : eveningStatus;
+        const bucket = statusBucket(singleStatus);
+        const result = bucket === 'ABSENT' ? 'ขาด' : bucket === 'LEAVE' ? 'ลา' : 'ปกติ';
+        return { name, morningStatus, eveningStatus, result };
+      }
+      return { name, morningStatus, eveningStatus, result: 'ไม่ทราบ' }; // รอข้อมูลอีกฝั่ง ไม่เดาผล
     }
     const morningStatus = morningMap[name];
     const eveningStatus = eveningMap[name];
@@ -831,7 +842,53 @@ function categorizeDay(morningStatus, eveningStatus) {
   return 'absent'; // ขาดทั้งคู่
 }
 
+// ตัดสินหมวดจากฝั่งเดียว (อีกฝั่งไม่มีข้อมูล) — ใช้ตอนวันนั้นส่งมาแค่เช้าหรือแค่เย็น "สาย"/"หนี" เดา
+// จากฝั่งเดียวไม่ได้เลย จึงไม่มีทางคืนค่านั้น (ต้องเทียบสองฝั่งเท่านั้น ดู categorizeDay)
+// ฟังก์ชัน pure ไม่แตะ Sheet ใดๆ — ทดสอบแยกได้ด้วย Node ตรงๆ
+function categorizeSingleSide(status) {
+  const b = statusBucket(status);
+  if (b === 'ABSENT') return 'absent';
+  if (b === 'LEAVE') return (status === 'ลาป่วย') ? 'sickLeave' : 'personalLeave';
+  return (status === 'ไปกิจกรรม') ? 'activity' : 'present';
+}
+
 const RANGE_SUMMARY_CATS = ['present', 'absent', 'personalLeave', 'sickLeave', 'late', 'truant', 'activity'];
+
+// index แถวเช้า/เย็นตาม `date|room` เฉพาะช่วงวันที่+ห้องที่เกี่ยวข้อง กันสแกนซ้ำทุกวัน — ใช้ร่วมกันทั้ง
+// getStudentRangeSummaryData (สรุปทั้งช่วง) และ getStudentDayDetailData (รายละเอียดคนเดียว)
+// roomsFilter: object ที่มี key เป็นชื่อห้องที่อนุญาต (ใช้ `in` เช็ค) — ไม่ใช่ array
+function buildDateRoomIndex(rows, startDate, endDate, roomsFilter) {
+  const idx = {};
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    const date = cellDateStr(r[0]);
+    if (date < startDate || date > endDate) continue;
+    const rm = normalizeRoom(r[1]);
+    if (!(rm in roomsFilter)) continue;
+    idx[date + '|' + rm] = r;
+  }
+  return idx;
+}
+
+// คำนวณคะแนนความประพฤติคงเหลือปัจจุบัน (ภาคเรียนปัจจุบัน ไม่ผูกกับช่วงวันที่ที่เลือกดูรายงาน — คะแนน
+// เป็นค่าปัจจุบันเสมอ) เหมือน logic เดียวกับ handleBehaviorSummary แต่คำนวณได้หลายห้องพร้อมกันในรอบเดียว
+function getCurrentScores(term, rosterByRoom) {
+  const ss = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const rows = ss.getSheetByName('คะแนนความประพฤติ').getDataRange().getValues();
+  const scores = {};
+  Object.keys(rosterByRoom).forEach(rm => rosterByRoom[rm].forEach(name => { scores[rm + '||' + name] = 100; }));
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    if (String(r[2]).trim() !== term) continue;
+    const rm = normalizeRoom(r[3]);
+    const name = String(r[4]).trim();
+    const key = rm + '||' + name;
+    if (!(key in scores)) continue;
+    const pts = Number(r[7]) || 0;
+    scores[key] += (r[5] === 'เพิ่ม' ? pts : -pts);
+  }
+  return scores;
+}
 
 function getStudentRangeSummaryData(startDate, endDate, room) {
   const ctx = loadComparisonContext();
@@ -846,21 +903,8 @@ function getStudentRangeSummaryData(startDate, endDate, room) {
     (rosterByRoom[r] = rosterByRoom[r] || []).push(String(ctx.stuRows[i][2]).trim());
   }
 
-  // index แถวเช้า/เย็นตาม `date|room` เฉพาะช่วงวันที่+ห้องที่เกี่ยวข้อง กันสแกนซ้ำทุกวัน
-  function indexLog(rows) {
-    const idx = {};
-    for (let i = 1; i < rows.length; i++) {
-      const r = rows[i];
-      const date = cellDateStr(r[0]);
-      if (date < startDate || date > endDate) continue;
-      const rm = normalizeRoom(r[1]);
-      if (!(rm in rosterByRoom)) continue;
-      idx[date + '|' + rm] = r;
-    }
-    return idx;
-  }
-  const morningIdx = indexLog(ctx.morningLog);
-  const eveningIdx = indexLog(ctx.eveningLog);
+  const morningIdx = buildDateRoomIndex(ctx.morningLog, startDate, endDate, rosterByRoom);
+  const eveningIdx = buildDateRoomIndex(ctx.eveningLog, startDate, endDate, rosterByRoom);
 
   // สถิติต่อห้อง — ส่งเช้ากี่วัน/ส่งครบทั้งคู่กี่วัน/ขาดส่งเย็นกี่วัน ในช่วงที่เลือก (ครูขอเพิ่ม
   // 2569 หลังเจอว่าตัวเลขต่อคนดูน้อยกว่าที่คาด เพราะห้องส่วนใหญ่ส่งเช้าสม่ำเสมอกว่าเช็คกลับ 15:30 มาก)
@@ -884,18 +928,28 @@ function getStudentRangeSummaryData(startDate, endDate, room) {
     });
   });
 
-  // เดินเฉพาะวันที่ห้องนั้นส่งครบทั้งเช้า-เย็น (ยังไม่ครบ = ไม่เดา ข้ามวันนั้นไปเลย เหมือน getDailyComparisonData)
-  Object.keys(morningIdx).forEach(key => {
-    if (!(key in eveningIdx)) return;
+  // เดินทุกวันที่มีข้อมูลอย่างน้อยฝั่งใดฝั่งหนึ่ง (union ไม่ใช่ intersection เหมือนเดิม) — ครบทั้งคู่ใช้
+  // categorizeDay เทียบจริง มีฝั่งเดียวใช้ categorizeSingleSide ตัดสินจากฝั่งที่มี (ครูขอ 2569 หลังพบว่า
+  // ตัวเลขน้อยกว่าคาดเพราะห้องส่งเช้าสม่ำเสมอกว่าเย็นมาก — "สาย"/"หนี" ยังต้องครบคู่เท่านั้นอยู่ดี)
+  const allDayKeys = {};
+  Object.keys(morningIdx).forEach(k => { allDayKeys[k] = true; });
+  Object.keys(eveningIdx).forEach(k => { allDayKeys[k] = true; });
+  Object.keys(allDayKeys).forEach(key => {
     const rm = key.split('|')[1];
     const roster = rosterByRoom[rm];
-    const morningMap = statusMapFromRow(roster, morningIdx[key], MORNING_NAME_COLS);
-    const eveningMap = statusMapFromRow(roster, eveningIdx[key], EVENING_NAME_COLS);
+    const hasMorning = key in morningIdx, hasEvening = key in eveningIdx;
+    const morningMap = hasMorning ? statusMapFromRow(roster, morningIdx[key], MORNING_NAME_COLS) : null;
+    const eveningMap = hasEvening ? statusMapFromRow(roster, eveningIdx[key], EVENING_NAME_COLS) : null;
     roster.forEach(name => {
-      const cat = categorizeDay(morningMap[name], eveningMap[name]);
+      const cat = (hasMorning && hasEvening)
+        ? categorizeDay(morningMap[name], eveningMap[name])
+        : categorizeSingleSide(hasMorning ? morningMap[name] : eveningMap[name]);
       counters[rm + '||' + name][cat]++;
     });
   });
+
+  const term = getCurrentTermValue();
+  const scores = getCurrentScores(term, rosterByRoom);
 
   const totals = { present: 0, absent: 0, personalLeave: 0, sickLeave: 0, late: 0, truant: 0, activity: 0, total: 0 };
   const students = Object.keys(counters).map(key => {
@@ -903,11 +957,55 @@ function getStudentRangeSummaryData(startDate, endDate, room) {
     c.total = RANGE_SUMMARY_CATS.reduce((sum, cat) => sum + c[cat], 0);
     RANGE_SUMMARY_CATS.forEach(cat => { totals[cat] += c[cat]; });
     totals.total += c.total;
+    c.score = scores[key];
     return c;
   });
   students.sort((a, b) => a.room === b.room ? a.name.localeCompare(b.name, 'th') : a.room.localeCompare(b.room, 'th'));
 
   return { status: 'ok', startDate, endDate, room: room || 'all', students, totals, roomStats: roomStatsList };
+}
+
+// ------------------------------------------------------------
+//  รายละเอียดวันที่จริงของนักเรียน 1 คน (กดดูตอนคลิกปุ่ม "ดูรายละเอียด" ในหน้าสรุปรายบุคคล) —
+//  ไม่โหลดพร้อมตารางหลักเพราะอาจมีนักเรียนเป็นร้อยคนต่อการค้นหาครั้งเดียว โหลดทีละคนตามที่กดเท่านั้น
+// ------------------------------------------------------------
+function handleStudentDayDetail(params) {
+  const startDate = normalizeDateParam(params.startDate || '');
+  const endDate   = normalizeDateParam(params.endDate || '');
+  const room      = normalizeRoom(params.room || '');
+  const name      = String(params.name || '').trim();
+  if (!startDate || !endDate || !room || !name) return respond({ status: 'error', message: 'ข้อมูลไม่ครบ' });
+  if (startDate > endDate) return respond({ status: 'error', message: 'ช่วงวันที่ไม่ถูกต้อง' });
+  return respond(getStudentDayDetailData(startDate, endDate, room, name));
+}
+
+function getStudentDayDetailData(startDate, endDate, room, name) {
+  const ctx = loadComparisonContext();
+  const roomsFilter = {}; roomsFilter[room] = true;
+  const morningIdx = buildDateRoomIndex(ctx.morningLog, startDate, endDate, roomsFilter);
+  const eveningIdx = buildDateRoomIndex(ctx.eveningLog, startDate, endDate, roomsFilter);
+
+  const roster = [];
+  for (let i = 1; i < ctx.stuRows.length; i++) {
+    if (normalizeRoom(ctx.stuRows[i][0]) === room && ctx.stuRows[i][2]) roster.push(String(ctx.stuRows[i][2]).trim());
+  }
+
+  const dates = { present: [], absent: [], personalLeave: [], sickLeave: [], late: [], truant: [], activity: [] };
+  const allDayKeys = {};
+  Object.keys(morningIdx).forEach(k => { allDayKeys[k] = true; });
+  Object.keys(eveningIdx).forEach(k => { allDayKeys[k] = true; });
+  Object.keys(allDayKeys).sort().forEach(key => {
+    const date = key.split('|')[0];
+    const hasMorning = key in morningIdx, hasEvening = key in eveningIdx;
+    const morningMap = hasMorning ? statusMapFromRow(roster, morningIdx[key], MORNING_NAME_COLS) : null;
+    const eveningMap = hasEvening ? statusMapFromRow(roster, eveningIdx[key], EVENING_NAME_COLS) : null;
+    const cat = (hasMorning && hasEvening)
+      ? categorizeDay(morningMap[name], eveningMap[name])
+      : categorizeSingleSide(hasMorning ? morningMap[name] : eveningMap[name]);
+    dates[cat].push(date);
+  });
+
+  return { status: 'ok', name, room, dates };
 }
 
 // doGet action=dailyComparison — ระบุ room คืนห้องเดียว, ไม่ระบุ room คืนทุกห้อง (ใช้โดยแดชบอร์ด)
@@ -1436,13 +1534,18 @@ function countPriorActiveOccurrences(rowsForNameRoomTerm, cat, excludeDate) {
 // เรียกจากท้าย handleSubmit (เช้า) และ handleSubmitEvening (เย็น) ทุกครั้งที่ submit สำเร็จ (รวมถึง
 // resubmit ทับของเดิม) — ใช้ deriveDailyResult ตัวเดียวกับแดชบอร์ดตัดสินสถานะรายวันของทุกคนในห้อง
 // แล้ว sync รายการหักอัตโนมัติของ Sheet "คะแนนความประพฤติ" ให้ตรงข้อเท็จจริงล่าสุดเสมอ (idempotent)
-function reconcileAbsenceDeduction(dateStr, room) {
+// opts.lenient: ส่งต่อให้ getDailyComparisonData — เรียก real-time (จาก handleSubmit/handleSubmitEvening
+// ด้านบน) ต้อง**ไม่ใส่** opts เด็ดขาด (เข้มงวด รอครบคู่) กันหักคะแนนก่อนถึงเวลาเช็คกลับจริง — ใส่
+// {lenient:true} ได้เฉพาะตอนเรียกจาก checkMissingReports() ตอน 20:00 หลังรอทั้งวันแล้วเท่านั้น
+// (ฟังก์ชันนี้ idempotent อยู่แล้วเพราะเช็ค state.netAuto/manualLocked ทุกครั้ง จึงยังแก้ไขย้อนหลังได้
+// ปลอดภัยถ้าเย็นมาทีหลังการหักแบบ lenient — ดูรายละเอียดที่ checkMissingReports)
+function reconcileAbsenceDeduction(dateStr, room, opts) {
   room = normalizeRoom(room);
   const ss   = SpreadsheetApp.openById(SPREADSHEET_ID);
   const term = getCurrentTermValue();
 
   const ctx     = loadComparisonContext();
-  const dayData = getDailyComparisonData(dateStr, room, ctx);
+  const dayData = getDailyComparisonData(dateStr, room, ctx, opts);
 
   const behSheet   = ss.getSheetByName('คะแนนความประพฤติ');
   const allBehRows = behSheet.getDataRange().getValues();
@@ -1623,6 +1726,18 @@ function checkMissingReports() {
     behSheet.getRange(startRow, 1, newRows.length, newRows[0].length).setValues(newRows);
   }
   Logger.log('checkMissingReports (' + dateStr + '): หักไป ' + newRows.length + ' แถว');
+
+  // ห้องที่ได้ข้อมูลมาแค่ฝั่งเดียววันนี้ (เช้าอย่างเดียว หรือเย็นอย่างเดียว ไม่ใช่ขาดทั้งคู่) — รอจน
+  // ถึง 20:00 แล้วยังไม่ครบคู่ ถือว่าอีกฝั่งคงไม่มาแล้วจริงๆ ค่อยหักคะแนนพฤติกรรมรายคนจากฝั่งที่มีแทน
+  // การรอเฉยๆ ไปเรื่อย (lenient) — แยกจากบล็อกด้านบนโดยตั้งใจ (ด้านบนคือหักรายงานหายระดับห้อง อันนี้คือ
+  // หักพฤติกรรมรายคนตามเกณฑ์ขาด/สาย/ลา) ต้องรันหลังบล็อกเขียน newRows เสร็จแล้วเท่านั้น (อ่านลำดับ
+  // เวลาถูกต้อง) — reconcileAbsenceDeduction เองก็ idempotent อยู่แล้ว ถ้าเย็นมาทีหลังการหักแบบ lenient
+  // นี้ ครั้งถัดไปที่มันถูกเรียก real-time (ตอนห้องส่งเย็นจริง) จะแก้ไขคะแนนที่หักผิดให้อัตโนมัติ
+  allRooms.forEach(room => {
+    const hasMorning = morningSubmitted.has(room);
+    const hasEvening = eveningSubmitted.has(room);
+    if (hasMorning !== hasEvening) reconcileAbsenceDeduction(dateStr, room, { lenient: true });
+  });
 }
 
 // ⚠️ รันครั้งเดียว — คืนคะแนน "ไม่ส่งรายงาน" ที่หักไปแล้วก่อนวันที่เริ่มบังคับจริง (MISSING_REPORT_START_DATE)
