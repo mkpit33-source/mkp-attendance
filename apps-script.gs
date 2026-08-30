@@ -192,6 +192,7 @@ function doGet(e) {
     if (action === 'rangeSummary') return handleRangeSummary(e.parameter);
     if (action === 'studentRangeSummary') return handleStudentRangeSummary(e.parameter);
     if (action === 'studentDayDetail') return handleStudentDayDetail(e.parameter);
+    if (action === 'backfillLenientPreview') return handleBackfillLenientPreview(); // dry-run เท่านั้น ไม่เขียนข้อมูล
     // ---- งานกิจการนักเรียน: เช็คกลับ 15:30 ----
     if (action === 'eveningByDate')    return handleEveningByDate(e.parameter.date || todayStr());
     if (action === 'dailyComparison')  return handleDailyComparison(e.parameter);
@@ -1886,6 +1887,161 @@ function backfillQuotaHistory() {
   setSettingValue(BACKFILL_DONE_KEY, 'yes');
   Logger.log('backfillQuotaHistory เสร็จแล้ว — เขียน ' + newRows.length + ' แถว ย้อนหลังตั้งแต่ ' + TERM_START_DATE + ' ถึง ' + endDate);
 }
+
+// ------------------------------------------------------------
+//  ⚙️ Backfill รอบสอง — หักคะแนน "ขาด/ลา" ย้อนหลังจากวันที่ห้องส่งรายงาน "ฝั่งเดียว" + หัก "สาย"
+//  ย้อนหลังทุกวันที่ส่งครบคู่ (ครูเปลี่ยนนโยบาย 2026-08-31 — เดิม backfillQuotaHistory ตั้งใจข้าม
+//  ทั้งสองอย่างนี้ ดูคอมเมนต์ในฟังก์ชันนั้น แต่ครูยืนยันใหม่ว่าต้องการหักย้อนหลังทั้งคู่ เพราะหน้า
+//  "สรุปการมาเรียนรายบุคคล" เผยว่าเด็กหลายคนขาด 13-16 ครั้ง แต่คะแนนยัง 100 เพราะ 2 เหตุผล:
+//    (1) ระบบเดิมนับ "ขาด" เฉพาะวันที่ห้องส่งครบทั้งเช้า-เย็น ซึ่งทุกห้องส่งครบคู่แค่ 2-9 วัน/เทอม
+//    (2) "สาย" ไม่เคยถูก backfill เลย)
+//  หลักการ (ยืนยันกับครูแล้ว 2026-08-31):
+//    - วันส่งฝั่งเดียว (เช้าอย่างเดียว หรือเย็นอย่างเดียว): ตัดสินจากฝั่งที่มี — เช้า/เย็นขาด → "ขาด",
+//      เช้า/เย็นลา → "ลากิจ/ลาป่วย" (สมมาตร เช้ากับเย็นใช้กฎเดียวกัน) — "สาย/หนี" เดาจากฝั่งเดียว
+//      ไม่ได้ จึงไม่หักในวันแบบนี้
+//    - วันส่งครบคู่: หัก "สาย" (เช้าขาด-เย็นมา, หัก 5 ทุกครั้ง ไม่มีโควตา) — ส่วน "ขาด/ลา" วันครบคู่
+//      backfillQuotaHistory เดิมทำไปแล้ว จึงถูก computeCategoryStateForDate กันซ้ำให้อัตโนมัติ
+//    - ช่วง: TERM_START_DATE (16 พ.ค. 69) ถึง "เมื่อวาน" — ข้ามวันหยุด (isNonSchoolDay)
+//  ปลอดภัย: idempotent เต็มรูปแบบ — เช็ค computeCategoryStateForDate ก่อนเขียนทุกแถว (netAuto!=0 หรือ
+//  manualLocked = ข้าม) จึงรันซ้ำได้ ไม่หักซ้ำ ไม่ทับรายการที่ครูเคยกด "ยกเลิก" — ยังมี flag กันรันซ้ำ
+//  โดยไม่ตั้งใจอีกชั้น (BACKFILL_LENIENT_DONE_KEY)
+// ------------------------------------------------------------
+const BACKFILL_LENIENT_DONE_KEY = 'Backfill ฝั่งเดียว+สาย ย้อนหลัง รันแล้ว';
+
+// core — dryRun=true: ไม่เขียนอะไรลง Sheet เลย คืนสรุป+รายละเอียดสำหรับตรวจก่อน
+function runBackfillLenient(dryRun) {
+  const ss   = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const term = getCurrentTermValue();
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const endDate = Utilities.formatDate(yesterday, TZ, 'yyyy-MM-dd');
+
+  const roomRows = ss.getSheetByName('ห้องเรียน').getDataRange().getValues();
+  const allRooms = [];
+  for (let i = 1; i < roomRows.length; i++) if (roomRows[i][0]) allRooms.push(normalizeRoom(roomRows[i][0]));
+
+  const ctx      = loadComparisonContext();
+  const behSheet = ss.getSheetByName('คะแนนความประพฤติ');
+  const behRows  = behSheet.getDataRange().getValues();
+
+  // index ledger เดิม เฉพาะภาคเรียนนี้ ตาม room|name (สำหรับ computeCategoryStateForDate /
+  // countPriorActiveOccurrences ต่อคน — ไม่ต้องอ่าน Sheet ซ้ำระหว่างวน)
+  const ledgerByPerson = {}; // 'room|name' -> [row,...]
+  for (let i = 1; i < behRows.length; i++) {
+    const r = behRows[i];
+    if (String(r[2]).trim() !== term) continue;
+    const key = normalizeRoom(r[3]) + '|' + String(r[4]).trim();
+    (ledgerByPerson[key] = ledgerByPerson[key] || []).push(r);
+  }
+
+  const timeStr = Utilities.formatDate(new Date(), TZ, 'HH:mm:ss');
+  const newRows = [];
+  const addedByPersonCat = {}; // 'room|name|catKey' -> count (occurrence ที่เพิ่ง backfill รอบนี้ ยังไม่อยู่ใน ledger)
+  const stat = { ABSENT: {n:0, pts:0}, PERSONAL_LEAVE: {n:0, pts:0}, SICK_LEAVE: {n:0, pts:0}, LATE: {n:0, pts:0} };
+  const bySource = { oneSide: 0, bothCouple: 0 };
+  const perStudent = {}; // 'room|name' -> คะแนนรวมที่จะถูกหัก (สำหรับ preview จัดอันดับ)
+
+  let cursor = TERM_START_DATE;
+  while (cursor <= endDate) {
+    if (isNonSchoolDay(cursor, ss)) {
+      cursor = _nextDateStr(cursor);
+      continue;
+    }
+    allRooms.forEach(room => {
+      const dayData  = getDailyComparisonData(cursor, room, ctx, { lenient: true });
+      const bothDone = dayData.morningDone && dayData.eveningDone;
+      const oneDone  = (dayData.morningDone || dayData.eveningDone) && !bothDone;
+      if (!bothDone && !oneDone) return; // ไม่มีข้อมูลเลย — ข้าม
+
+      dayData.students.forEach(stu => {
+        if (stu.result === 'ไม่ทราบ') return;
+
+        let catKey = null;
+        if (stu.result === 'ขาด') catKey = 'ABSENT';
+        else if (stu.result === 'ลา') {
+          const sick = stu.morningStatus === 'ลาป่วย' || stu.eveningStatus === 'ลาป่วย';
+          catKey = sick ? 'SICK_LEAVE' : 'PERSONAL_LEAVE';
+        } else if (stu.result === 'สาย' && bothDone) {
+          catKey = 'LATE'; // สายต้องเทียบสองฝั่ง — วันส่งฝั่งเดียวไม่มีทางได้ผลนี้อยู่แล้ว
+        }
+        if (!catKey) return; // ปกติ/หนี/สายที่ไม่ครบคู่ — ไม่หัก
+
+        const cat  = DEDUCTION_CATEGORIES[catKey];
+        const pkey = room + '|' + stu.name;
+        const ledger = ledgerByPerson[pkey] || [];
+
+        // กันซ้ำ: วันนี้+ประเภทนี้ เคยมีรายการหักอัตโนมัติที่ยัง active อยู่แล้ว หรือครูกดยกเลิกไปแล้ว → ข้าม
+        const state = computeCategoryStateForDate(ledger, cursor, cat);
+        if (state.netAuto !== 0 || state.manualLocked) return;
+
+        // คำนวณคะแนนตามโควตา — priorCount = จาก ledger เดิม + ที่เพิ่ง backfill รอบนี้ (ยังไม่อยู่ใน ledger)
+        let points = cat.points;
+        if (cat.quota !== null) {
+          const catMemKey = pkey + '|' + catKey;
+          const prior = countPriorActiveOccurrences(ledger, cat, cursor) + (addedByPersonCat[catMemKey] || 0);
+          points = pointsForOccurrence(prior + 1, cat.points, cat.quota);
+          addedByPersonCat[catMemKey] = (addedByPersonCat[catMemKey] || 0) + 1;
+        }
+
+        newRows.push([cursor, timeStr, term, room, stu.name, 'หัก', cat.autoReason, points, AUTO_REPORTER]);
+        stat[catKey].n++; stat[catKey].pts += points;
+        bySource[bothDone ? 'bothCouple' : 'oneSide']++;
+        perStudent[pkey] = (perStudent[pkey] || 0) + points;
+      });
+    });
+    cursor = _nextDateStr(cursor);
+  }
+
+  const totalPts = Object.keys(stat).reduce((s, k) => s + stat[k].pts, 0);
+  const topStudents = Object.keys(perStudent)
+    .map(k => ({ who: k, pts: perStudent[k] }))
+    .sort((a, b) => b.pts - a.pts)
+    .slice(0, 15);
+
+  const summary = {
+    dryRun: !!dryRun, range: TERM_START_DATE + ' ถึง ' + endDate, term,
+    totalRows: newRows.length, totalPointsDeducted: totalPts,
+    byCategory: stat, bySource,
+    studentsAffected: Object.keys(perStudent).length,
+    topStudentsByPointsLost: topStudents,
+  };
+
+  if (dryRun) {
+    Logger.log('=== DRY-RUN backfillLenient (ไม่เขียนอะไรลง Sheet) ===');
+    Logger.log(JSON.stringify(summary, null, 2));
+    return summary;
+  }
+
+  if (newRows.length) {
+    const startRow = behSheet.getLastRow() + 1;
+    behSheet.getRange(startRow, 1, newRows.length, newRows[0].length).setValues(newRows);
+  }
+  setSettingValue(BACKFILL_LENIENT_DONE_KEY, 'yes');
+  Logger.log('backfillLenient เขียนจริงเสร็จ — ' + newRows.length + ' แถว, รวม -' + totalPts + ' คะแนน');
+  Logger.log(JSON.stringify(summary, null, 2));
+  return summary;
+}
+
+function _nextDateStr(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  d.setDate(d.getDate() + 1);
+  return Utilities.formatDate(d, TZ, 'yyyy-MM-dd');
+}
+
+// เลือกฟังก์ชันนี้ที่ dropdown ของ Apps Script editor แล้วกด Run — ดูผลใน Execution log ไม่เขียนข้อมูลจริง
+function backfillLenientPreview() { return runBackfillLenient(true); }
+
+// รันจริง — เขียนรายการหักลง Sheet "คะแนนความประพฤติ" (มี flag กันรันซ้ำ + idempotent ในตัว)
+function backfillLenientApply() {
+  if (getSettingValue(BACKFILL_LENIENT_DONE_KEY) === 'yes') {
+    Logger.log('เคยรัน backfillLenientApply ไปแล้ว — ถ้าจงใจจะรันซ้ำ ให้ลบแถว "' + BACKFILL_LENIENT_DONE_KEY + '" ออกจาก Sheet "ตั้งค่ากิจการนักเรียน" ก่อน (idempotent อยู่แล้ว รันซ้ำไม่หักซ้ำ)');
+    return;
+  }
+  return runBackfillLenient(false);
+}
+
+// doGet action=backfillLenientPreview — ดู dry-run ผ่าน URL ได้โดยไม่ต้องเปิด editor (อ่านอย่างเดียว)
+function handleBackfillLenientPreview() { return respond(runBackfillLenient(true)); }
 
 // ------------------------------------------------------------
 //  แปลงวันเป็นข้อความไทยเต็มรูปแบบ "วันจันทร์ที่ 3 สิงหาคม 2569" (ปี พ.ศ.)
