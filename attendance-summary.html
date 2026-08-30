@@ -83,6 +83,21 @@
 
   <div class="totals-grid" id="totalsGrid" style="display:none;"></div>
 
+  <!-- ครูขอเพิ่ม 2569 หลังพบว่าตัวเลขต่อคนดูน้อยกว่าที่คาด — สาเหตุคือห้องส่งเช้าสม่ำเสมอกว่า
+       เช็คกลับ 15:30 มาก ตารางนี้ช่วยชี้ว่าห้องไหนขาดส่งเย็นบ่อยจนกระทบตัวเลขรวม -->
+  <div class="form-card" id="roomStatsCard" style="display:none;">
+    <h3 style="margin:0 0 0.75rem;">📋 ความครบถ้วนของรายงานต่อห้อง (ช่วงเวลาที่เลือก)</h3>
+    <div class="table-wrap">
+      <table class="att-table" id="roomStatsTable">
+        <thead><tr><th>ห้อง</th><th>ส่งเช้า</th><th>ส่งครบทั้งคู่</th><th>ส่งเช้าแต่ไม่ส่งเย็น</th></tr></thead>
+        <tbody id="roomStatsBody"></tbody>
+      </table>
+    </div>
+    <p class="summary-line" style="color:var(--muted,#666); font-size:0.8rem; margin-top:0.5rem;">
+      คอลัมน์ขวาสุด = วันที่ตัวเลขรายบุคคลด้านล่างยังนับไม่ได้ เพราะห้องนั้นยังไม่ได้ส่งเช็คกลับ 15:30
+    </p>
+  </div>
+
   <div class="table-wrap">
     <table class="att-table" id="summaryTable" style="display:none;">
       <thead>
@@ -184,6 +199,7 @@ async function loadSummary(startDate, endDate, room) {
     }
     renderTotals(json.totals);
     renderTable(json.students);
+    renderRoomStats(json.roomStats);
     note.textContent = `ช่วงวันที่ ${thaiDateLabel(startDate)} - ${thaiDateLabel(endDate)} — นับเฉพาะวันที่ห้องส่งรายงานครบทั้งเช้าและเย็น`;
   } catch {
     body.innerHTML = `<tr><td colspan="${COLS}">ไม่สามารถเชื่อมต่อได้</td></tr>`;
@@ -203,6 +219,23 @@ function renderTotals(t) {
     <div class="total-tile"><div class="num">${t.truant || 0}</div><div class="lbl">หนี</div></div>
     <div class="total-tile"><div class="num">${t.activity || 0}</div><div class="lbl">ไปกิจกรรม</div></div>
   `;
+}
+
+// ไฮไลต์แถวห้องที่ขาดส่งเย็นเยอะ (>= ครึ่งหนึ่งของที่ส่งเช้า) ให้เห็นชัดว่าควรตามเรื่อง
+function renderRoomStats(roomStats) {
+  const card = document.getElementById('roomStatsCard');
+  const body = document.getElementById('roomStatsBody');
+  if (!roomStats || !roomStats.length) { card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  body.innerHTML = roomStats.map(r => {
+    const warn = r.morningCount > 0 && r.morningOnlyCount / r.morningCount >= 0.5;
+    return `
+      <tr${warn ? ' style="background:#fdecea;"' : ''}>
+        <td>${r.room}</td><td>${r.morningCount}</td><td>${r.bothCount}</td>
+        <td>${r.morningOnlyCount}${warn ? ' ⚠️' : ''}</td>
+      </tr>
+    `;
+  }).join('');
 }
 
 function renderTable(students) {

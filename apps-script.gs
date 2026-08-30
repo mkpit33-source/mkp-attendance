@@ -862,6 +862,18 @@ function getStudentRangeSummaryData(startDate, endDate, room) {
   const morningIdx = indexLog(ctx.morningLog);
   const eveningIdx = indexLog(ctx.eveningLog);
 
+  // สถิติต่อห้อง — ส่งเช้ากี่วัน/ส่งครบทั้งคู่กี่วัน/ขาดส่งเย็นกี่วัน ในช่วงที่เลือก (ครูขอเพิ่ม
+  // 2569 หลังเจอว่าตัวเลขต่อคนดูน้อยกว่าที่คาด เพราะห้องส่วนใหญ่ส่งเช้าสม่ำเสมอกว่าเช็คกลับ 15:30 มาก)
+  const roomStats = {};
+  Object.keys(rosterByRoom).forEach(rm => { roomStats[rm] = { room: rm, morningCount: 0, bothCount: 0, morningOnlyCount: 0 }; });
+  Object.keys(morningIdx).forEach(key => {
+    const rm = key.split('|')[1];
+    roomStats[rm].morningCount++;
+    if (key in eveningIdx) roomStats[rm].bothCount++; else roomStats[rm].morningOnlyCount++;
+  });
+  const roomStatsList = Object.keys(roomStats).map(rm => roomStats[rm])
+    .sort((a, b) => a.room.localeCompare(b.room, 'th'));
+
   // นับต่อคน — key เป็น room+name กันชนกันกรณีคนละห้องแต่ชื่อซ้ำ (แสดงผลใช้แค่ name/room แยก field)
   const counters = {};
   Object.keys(rosterByRoom).forEach(rm => {
@@ -895,7 +907,7 @@ function getStudentRangeSummaryData(startDate, endDate, room) {
   });
   students.sort((a, b) => a.room === b.room ? a.name.localeCompare(b.name, 'th') : a.room.localeCompare(b.room, 'th'));
 
-  return { status: 'ok', startDate, endDate, room: room || 'all', students, totals };
+  return { status: 'ok', startDate, endDate, room: room || 'all', students, totals, roomStats: roomStatsList };
 }
 
 // doGet action=dailyComparison — ระบุ room คืนห้องเดียว, ไม่ระบุ room คืนทุกห้อง (ใช้โดยแดชบอร์ด)
