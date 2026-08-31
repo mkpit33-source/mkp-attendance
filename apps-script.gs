@@ -115,7 +115,12 @@ function setupSheets() {
   // ไม่ตรงกัน ประวัติคะแนนหายไปทั้งระบบกว่าจะรู้ตัว) ตั้งเป็นทั้งคอลัมน์ (ไม่ใช่แค่แถวที่มีข้อมูลอยู่ตอนนี้)
   // เพื่อให้ครอบคลุมแถวใหม่ที่จะเพิ่มในอนาคตด้วย รันซ้ำได้ปลอดภัยเหมือนส่วนอื่นของฟังก์ชันนี้
   const behSheetForFormat = ss.getSheetByName('คะแนนความประพฤติ');
-  if (behSheetForFormat) behSheetForFormat.getRange('C:C').setNumberFormat('@');
+  if (behSheetForFormat) {
+    behSheetForFormat.getRange('C:C').setNumberFormat('@');
+    // [แก้ 2026-08-31 #4] คอลัมน์ "เวลา" (B) ด้วย — สตริง "HH:mm:ss" ถูก Sheets แปลงเป็นค่าเวลาเอง
+    // ทำให้ undoBackfillLenient() อ่านกลับมาเทียบ timeStr ไม่ตรง (undo ใช้ col B เป็นตัวจับคู่รอบ)
+    behSheetForFormat.getRange('B:B').setNumberFormat('@');
+  }
   const cfgSheetForFormat = ss.getSheetByName('ตั้งค่ากิจการนักเรียน');
   if (cfgSheetForFormat) cfgSheetForFormat.getRange('B:B').setNumberFormat('@');
 
@@ -1517,6 +1522,14 @@ function computeCategoryStateForDate(rowsForNameRoom, date, cat) {
 // นับจำนวนวัน "อื่น" (ไม่รวม excludeDate) ในภาคเรียนปัจจุบันที่ยัง active จริงสำหรับประเภทนี้ — ใช้หา
 // ว่าวันนี้คือครั้งที่เท่าไหร่ของโควตา (วันเก่าแก้ไขไม่ได้แล้วเพราะระบบเช็คชื่อบันทึกได้แค่ "วันนี้"
 // เท่านั้น จึงนิ่งไม่เปลี่ยนแปลงอีก ไม่ต้องคำนวณย้อนหลังใหม่ทุกครั้ง)
+//
+// ⚠️ สมมติฐานที่ต้องมีเสมอ (load-bearing): ฟังก์ชันนี้นับ "ทุกวันที่ active" ไม่ได้กรอง d < excludeDate
+//   ทำงานถูกใน real-time path เพราะประมวลผลแค่ "วันนี้" (ทุกแถวใน ledger จึงเป็นวันก่อนหน้าเสมอ)
+//   ส่วน runBackfillLenient เดินย้อนหลังจากอดีต → นับวัน both-couple ของเดือนถัดไปเป็น "prior" ด้วย
+//   → รายการหักอาจลงผิดวัน (attribution) แต่ "ยอดหักรวมต่อคนยังถูก" เพราะทุกครั้งที่เกินโควตาหักเท่ากัน
+//   หมด (flat 10) ยอดรวม = 10·max(0, N−quota) ไม่ขึ้นกับลำดับ — Logic Auditor ยืนยัน 33 เทสต์ 2026-08-31
+//   ❗ ถ้าอนาคตเปลี่ยนเป็นเกณฑ์ขั้นบันได (เช่น ครั้งที่ 11+ หัก 20) สมมติฐานนี้พังทันที ต้องแก้ให้กรอง
+//     d < excludeDate + เดินเฉพาะ occurrence เรียงวันจริงทั้งใน backfill และ real-time
 function countPriorActiveOccurrences(rowsForNameRoomTerm, cat, excludeDate) {
   const netByDate = {}, lockedByDate = {};
   rowsForNameRoomTerm.forEach(r => {
@@ -1907,6 +1920,25 @@ function backfillQuotaHistory() {
 //  โดยไม่ตั้งใจอีกชั้น (BACKFILL_LENIENT_DONE_KEY)
 // ------------------------------------------------------------
 const BACKFILL_LENIENT_DONE_KEY = 'Backfill ฝั่งเดียว+สาย ย้อนหลัง รันแล้ว';
+// [แก้ 2026-08-31 #4] เก็บ "ลายเซ็นรอบ backfill" = วันที่กด apply + เวลา (HH:mm:ss) ที่ทุกแถวใช้ร่วมกัน
+// ไว้ให้ undoBackfillLenient() ลบเฉพาะแถวของรอบนั้นได้แบบ surgical (ไม่แตะรายการ auto real-time
+// หรือของ backfillQuotaHistory เดิม ซึ่ง timeStr คนละค่า)
+const BACKFILL_LENIENT_RUN_KEY  = 'Backfill ฝั่งเดียว+สาย รหัสรอบล่าสุด';
+
+// [แก้ 2026-08-31 #1 กัน timeout] โหลดวันที่ทั้งคอลัมน์ A ของ Sheet หนึ่งเป็น Set ครั้งเดียว
+// ใช้ตอน backfill แทนการเรียก isNonSchoolDay() → isDateInSheet() ที่ getDataRange().getValues()
+// ใหม่ทุกวันปฏิทิน (~200 รอบตลอดการรัน เสี่ยง 6-min limit) — logic การ normalize ต้องตรงกับ isDateInSheet
+function _loadDateSet(ss, sheetName) {
+  const set = new Set();
+  const sheet = ss.getSheetByName(sheetName);
+  if (!sheet) return set;
+  const rows = sheet.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    const v = normalizeDateParam(String(rows[i][0]).trim());
+    if (v) set.add(v);
+  }
+  return set;
+}
 
 // core — dryRun=true: ไม่เขียนอะไรลง Sheet เลย คืนสรุป+รายละเอียดสำหรับตรวจก่อน
 function runBackfillLenient(dryRun) {
@@ -1915,6 +1947,18 @@ function runBackfillLenient(dryRun) {
   const yesterday = new Date();
   yesterday.setDate(yesterday.getDate() - 1);
   const endDate = Utilities.formatDate(yesterday, TZ, 'yyyy-MM-dd');
+
+  // [แก้ 2026-08-31 #1] เช็ควันหยุดจาก Set ที่โหลดครั้งเดียว — ลำดับตรรกะตรงกับ isNonSchoolDay()
+  //   1) อยู่ใน "วันเรียนพิเศษ" → มีเรียน (ชนะทุกกรณี รวมเสาร์ชดเชย)  2) เสาร์-อาทิตย์ → ไม่มีเรียน
+  //   3) อยู่ใน "วันหยุดเพิ่มเติม" → ไม่มีเรียน
+  const _specialDays = _loadDateSet(ss, 'วันเรียนพิเศษ');
+  const _holidayDays = _loadDateSet(ss, 'วันหยุดเพิ่มเติม');
+  const isNonSchoolDayFast = (dateStr) => {
+    if (_specialDays.has(dateStr)) return false;
+    const dow = new Date(dateStr + 'T12:00:00').getDay();
+    if (dow === 0 || dow === 6) return true;
+    return _holidayDays.has(dateStr);
+  };
 
   const roomRows = ss.getSheetByName('ห้องเรียน').getDataRange().getValues();
   const allRooms = [];
@@ -1940,10 +1984,12 @@ function runBackfillLenient(dryRun) {
   const stat = { ABSENT: {n:0, pts:0}, PERSONAL_LEAVE: {n:0, pts:0}, SICK_LEAVE: {n:0, pts:0}, LATE: {n:0, pts:0} };
   const bySource = { oneSide: 0, bothCouple: 0 };
   const perStudent = {}; // 'room|name' -> คะแนนรวมที่จะถูกหัก (สำหรับ preview จัดอันดับ)
+  const perStudentRows = {}; // [แก้ 2026-08-31 #2] 'room|name' -> จำนวนรายการหัก (บางคน pts=0 แต่มีรายการ)
+  const rowsByDate = {};     // [แก้ 2026-08-31 #2] 'yyyy-mm-dd' -> จำนวนรายการหักของวันนั้น (ไว้ eyeball วันหยุดหลุด)
 
   let cursor = TERM_START_DATE;
   while (cursor <= endDate) {
-    if (isNonSchoolDay(cursor, ss)) {
+    if (isNonSchoolDayFast(cursor)) {   // [แก้ 2026-08-31 #1] เดิม isNonSchoolDay(cursor, ss)
       cursor = _nextDateStr(cursor);
       continue;
     }
@@ -1987,28 +2033,47 @@ function runBackfillLenient(dryRun) {
         stat[catKey].n++; stat[catKey].pts += points;
         bySource[bothDone ? 'bothCouple' : 'oneSide']++;
         perStudent[pkey] = (perStudent[pkey] || 0) + points;
+        perStudentRows[pkey] = (perStudentRows[pkey] || 0) + 1;      // [แก้ 2026-08-31 #2]
+        rowsByDate[cursor] = (rowsByDate[cursor] || 0) + 1;          // [แก้ 2026-08-31 #2]
       });
     });
     cursor = _nextDateStr(cursor);
   }
 
   const totalPts = Object.keys(stat).reduce((s, k) => s + stat[k].pts, 0);
-  const topStudents = Object.keys(perStudent)
-    .map(k => ({ who: k, pts: perStudent[k] }))
-    .sort((a, b) => b.pts - a.pts)
-    .slice(0, 15);
+  // [แก้ 2026-08-31 #2] preview ต้องเห็น "ทุกคน" ที่มีรายการหัก (ไม่ใช่แค่ 15 คนแรก) — งานแตะ ~137 คน
+  const allStudents = Object.keys(perStudent)
+    .map(k => ({ who: k, pts: perStudent[k], rows: perStudentRows[k] || 0 }))
+    .sort((a, b) => b.pts - a.pts || b.rows - a.rows);
+  // [แก้ 2026-08-31 #2] จำนวนรายการต่อวัน เรียงตามวันที่ — ไว้สังเกตว่ามีวันหยุด/วันปิดเทอมหลุดมาไหม
+  const rowsByDateSorted = Object.keys(rowsByDate).sort()
+    .map(d => ({ date: d, rows: rowsByDate[d] }));
 
   const summary = {
     dryRun: !!dryRun, range: TERM_START_DATE + ' ถึง ' + endDate, term,
     totalRows: newRows.length, totalPointsDeducted: totalPts,
     byCategory: stat, bySource,
     studentsAffected: Object.keys(perStudent).length,
-    topStudentsByPointsLost: topStudents,
+    allStudentsByPointsLost: allStudents,
+    rowsByDate: rowsByDateSorted,
   };
 
   if (dryRun) {
+    // [แก้ 2026-08-31 #2b] แยก Logger.log เป็นหลายบรรทัด + log rowsByDate ก่อนรายชื่อ — กัน
+    // "Logging output too large. Truncating output" ตัด rowsByDate หายเพราะรายชื่อยาว
     Logger.log('=== DRY-RUN backfillLenient (ไม่เขียนอะไรลง Sheet) ===');
-    Logger.log(JSON.stringify(summary, null, 2));
+    Logger.log('range=' + summary.range + ' | term=' + summary.term +
+               ' | totalRows=' + summary.totalRows +
+               ' | totalPointsDeducted=' + summary.totalPointsDeducted +
+               ' | studentsAffected=' + summary.studentsAffected);
+    Logger.log('byCategory=' + JSON.stringify(summary.byCategory));
+    Logger.log('bySource=' + JSON.stringify(summary.bySource));
+    Logger.log('rowsByDate (' + rowsByDateSorted.length + ' วัน)=' + JSON.stringify(rowsByDateSorted));
+    // รายชื่อแบ่ง log ทีละ 40 คน กันโดนตัด
+    for (let i = 0; i < allStudents.length; i += 40) {
+      Logger.log('allStudentsByPointsLost [' + i + '..' + Math.min(i + 39, allStudents.length - 1) + ']=' +
+                 JSON.stringify(allStudents.slice(i, i + 40)));
+    }
     return summary;
   }
 
@@ -2017,9 +2082,93 @@ function runBackfillLenient(dryRun) {
     behSheet.getRange(startRow, 1, newRows.length, newRows[0].length).setValues(newRows);
   }
   setSettingValue(BACKFILL_LENIENT_DONE_KEY, 'yes');
-  Logger.log('backfillLenient เขียนจริงเสร็จ — ' + newRows.length + ' แถว, รวม -' + totalPts + ' คะแนน');
+  // [แก้ 2026-08-31 #4] บันทึกลายเซ็นรอบ = วันที่รัน + timeStr (ทุกแถว backfill ใช้ timeStr เดียวกัน)
+  const runDateStr = Utilities.formatDate(new Date(), TZ, 'yyyy-MM-dd');
+  setSettingValue(BACKFILL_LENIENT_RUN_KEY, runDateStr + ' ' + timeStr);
+  Logger.log('backfillLenient เขียนจริงเสร็จ — ' + newRows.length + ' แถว, รวม -' + totalPts + ' คะแนน (ลายเซ็นรอบ: ' + runDateStr + ' ' + timeStr + ')');
   Logger.log(JSON.stringify(summary, null, 2));
   return summary;
+}
+
+// ทางถอยของขั้น "รันจริง" — ลบเฉพาะแถวที่ backfillLenientApply() รอบล่าสุดเขียน แล้วรีเซ็ต flag กันรันซ้ำ
+// ให้ Sheet กลับไปเหมือนก่อนรัน (ไม่แตะรายการหัก auto real-time หรือ backfillQuotaHistory เดิม เพราะ
+// จับคู่ด้วย timeStr เฉพาะของรอบนั้น + ผู้รายงาน "ระบบอัตโนมัติ" + เหตุผล auto 4 ประเภท + วันที่ก่อนวันรัน)
+// เลือกฟังก์ชันนี้ที่ dropdown ของ editor แล้วกด Run — หลังรันเสร็จ backfillLenientApply() รันใหม่ได้อีกรอบ
+//
+// [แก้ 2026-08-31 #5 — Quality Gate] ป้องกันคะแนนเพี้ยน: `handleCancelAutoDeduction` (ปุ่ม "ยกเลิก")
+//   ไม่ลบแถวหักเดิม แต่ append แถว "เพิ่ม" (cancelReason) คู่กัน — และ reconcile อาจ append "เพิ่ม"
+//   (restoreReason) ถ้ารายงานถูกแก้ ถ้า undo ลบแถวหัก backfill ทิ้งแต่แถว "เพิ่ม" ค้าง → คะแนนเด็กพองเกิน
+//   100 แบบเงียบ จึงเช็คก่อนลบ: ทุกแถว backfill ต้องยัง netAuto===1 && !manualLocked (สะอาด ไม่เคยถูก
+//   ยกเลิก/คืนคะแนน) — ถ้าเจอแถวที่ไม่สะอาด → หยุด แจ้งรายการ ให้ครูจัดการคู่หัก+คืนด้วยมือก่อน
+function undoBackfillLenient() {
+  const raw = getSettingValue(BACKFILL_LENIENT_RUN_KEY);
+  if (!raw || raw.indexOf(' ') < 0) {
+    Logger.log('ไม่พบลายเซ็นรอบ backfill — อาจยังไม่เคยรัน backfillLenientApply() หรือ undo ไปแล้ว ไม่ทำอะไร');
+    return;
+  }
+  const sp      = raw.indexOf(' ');
+  const runDate = raw.slice(0, sp).trim();   // yyyy-MM-dd วันที่กด apply
+  const stamp   = raw.slice(sp + 1).trim();  // HH:mm:ss ที่ทุกแถว backfill ใช้ร่วมกัน
+
+  const ss   = SpreadsheetApp.openById(SPREADSHEET_ID);
+  const sh   = ss.getSheetByName('คะแนนความประพฤติ');
+  const rows = sh.getDataRange().getValues();
+  const term = getCurrentTermValue();
+
+  const autoReasonToKey = {};
+  ['ABSENT', 'LATE', 'PERSONAL_LEAVE', 'SICK_LEAVE'].forEach(k => {
+    autoReasonToKey[DEDUCTION_CATEGORIES[k].autoReason] = k;
+  });
+  const rowTimeOf = (r) => (r[1] instanceof Date)
+    ? Utilities.formatDate(r[1], TZ, 'HH:mm:ss')   // col B อาจถูก Sheets แปลงเป็นค่าเวลา — normalize
+    : String(r[1]).trim();
+
+  // pass 1 — เก็บแถว ledger ของแต่ละคน (ภาคเรียนนี้) + หาแถว backfill ที่ลายเซ็นตรง
+  const personRows = {}; // 'room|name' -> [r,...]
+  const targets    = []; // { rowNum, r, catKey }
+  for (let i = 1; i < rows.length; i++) {
+    const r = rows[i];
+    if (String(r[2]).trim() === term) {
+      const pk = normalizeRoom(r[3]) + '|' + String(r[4]).trim();
+      (personRows[pk] = personRows[pk] || []).push(r);
+    }
+    if (String(r[8]).trim() !== AUTO_REPORTER)  continue; // ผู้รายงาน = ระบบอัตโนมัติ
+    if (rowTimeOf(r) !== stamp)                 continue; // เวลา = timeStr ของรอบนั้นเป๊ะ
+    if (String(r[5]).trim() !== 'หัก')         continue; // ทิศทาง = หัก
+    const catKey = autoReasonToKey[String(r[6]).trim()];
+    if (!catKey)                               continue; // เหตุผล = auto 4 ประเภทของ backfill
+    if (cellDateStr(r[0]) >= runDate)          continue; // backfill แตะเฉพาะวันก่อนวันรัน
+    targets.push({ rowNum: i + 1, r: r, catKey: catKey });
+  }
+
+  if (!targets.length) {
+    Logger.log('undoBackfillLenient: ไม่พบแถวที่ตรงลายเซ็นรอบ (' + raw + ') — ไม่ลบอะไร ไม่ล้าง flag ' +
+               'ตรวจ Sheet "คะแนนความประพฤติ" เอง หรือลบแถว flag "' + BACKFILL_LENIENT_DONE_KEY + '" มือถ้าจงใจ');
+    return;
+  }
+
+  // pass 2 — เช็คว่าทุกแถว backfill ยัง "สะอาด" (ไม่เคยถูกกดยกเลิก / ระบบคืนคะแนน)
+  const dirty = [];
+  targets.forEach(t => {
+    const pk = normalizeRoom(t.r[3]) + '|' + String(t.r[4]).trim();
+    const st = computeCategoryStateForDate(personRows[pk] || [], cellDateStr(t.r[0]), DEDUCTION_CATEGORIES[t.catKey]);
+    if (st.netAuto !== 1 || st.manualLocked) {
+      dirty.push(normalizeRoom(t.r[3]) + ' | ' + String(t.r[4]).trim() + ' | ' + cellDateStr(t.r[0]) + ' | ' + t.catKey);
+    }
+  });
+  if (dirty.length) {
+    Logger.log('undoBackfillLenient: หยุด — พบ ' + dirty.length + ' แถว backfill ที่ถูกกดยกเลิก/คืนคะแนนไปแล้ว ' +
+               'undo อัตโนมัติจะทำให้คะแนนเพี้ยน (แถว "เพิ่ม" จะค้าง) — จัดการคู่ "หัก"+"เพิ่ม/คืน" ของรายการ' +
+               'เหล่านี้ด้วยมือใน Sheet "คะแนนความประพฤติ" ก่อน แล้วรัน undo ใหม่: ' + JSON.stringify(dirty) +
+               ' — ยังไม่ลบอะไร ไม่ล้าง flag');
+    return;
+  }
+
+  // pass 3 — ลบแถว backfill ทั้งหมด (เรียงเลขแถวมาก→น้อย เพื่อไม่ให้ index เลื่อน)
+  targets.sort((a, b) => b.rowNum - a.rowNum).forEach(t => sh.deleteRow(t.rowNum));
+  setSettingValue(BACKFILL_LENIENT_DONE_KEY, '');
+  setSettingValue(BACKFILL_LENIENT_RUN_KEY, '');
+  Logger.log('undoBackfillLenient: ลบ ' + targets.length + ' แถว + รีเซ็ต flag แล้ว — backfillLenientApply() รันใหม่ได้');
 }
 
 function _nextDateStr(dateStr) {
@@ -2041,7 +2190,14 @@ function backfillLenientApply() {
 }
 
 // doGet action=backfillLenientPreview — ดู dry-run ผ่าน URL ได้โดยไม่ต้องเปิด editor (อ่านอย่างเดียว)
-function handleBackfillLenientPreview() { return respond(runBackfillLenient(true)); }
+// [แก้ 2026-08-31 #5 — Quality Gate] endpoint นี้ไม่มี auth — ตัด allStudentsByPointsLost (ชื่อ-สกุล
+// นักเรียนทุกคน + คะแนนที่เสีย = ชั้นแดง) ออกจาก response ผ่าน URL คงไว้แค่ตัวเลข aggregate + rowsByDate
+// (ที่เป็นตัวเลขล้วน) — ถ้าต้องการรายชื่อรายคนให้เปิด backfillLenientPreview() ใน Apps Script editor แทน
+function handleBackfillLenientPreview() {
+  const s = runBackfillLenient(true);
+  delete s.allStudentsByPointsLost;
+  return respond(s);
+}
 
 // ------------------------------------------------------------
 //  แปลงวันเป็นข้อความไทยเต็มรูปแบบ "วันจันทร์ที่ 3 สิงหาคม 2569" (ปี พ.ศ.)
